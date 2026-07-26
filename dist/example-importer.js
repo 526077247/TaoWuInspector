@@ -326,16 +326,16 @@ export class TaoWuDemoComponent extends Component {
     @property({ type: [MapEntry] })
     @FoldoutGroup('列表与字典')
     configMap: MapEntry[] = [
-        { key: 'attack', value: 10 } as any,
-        { key: 'defense', value: 5 } as any,
+        (() => { const e = new MapEntry(); e.key = 'attack'; e.value = 10; return e; })(),
+        (() => { const e = new MapEntry(); e.key = 'defense'; e.value = 5; return e; })(),
     ];
 
     @property({ type: [MapEntry] })
     @TableList()
     @FoldoutGroup('列表与字典')
     configTableList: MapEntry[] = [
-        { key: 'speed', value: 8 } as any,
-        { key: 'luck', value: 3 } as any,
+        (() => { const e = new MapEntry(); e.key = 'speed'; e.value = 8; return e; })(),
+        (() => { const e = new MapEntry(); e.key = 'luck'; e.value = 3; return e; })(),
     ];
 }
 `

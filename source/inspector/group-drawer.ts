@@ -24,10 +24,13 @@ export function createFoldoutGroup(
 
     const content = document.createElement('div');
     content.className = 'taowu-foldout-content';
-    // 阻止内容区域事件冒泡到 ui-section，避免误触折叠
-    content.addEventListener('click', (e) => e.stopPropagation());
-    content.addEventListener('mousedown', (e) => e.stopPropagation());
-    content.addEventListener('pointerdown', (e) => e.stopPropagation());
+    // 拦截所有冒泡到 content 的事件，阻止触发 ui-section 折叠
+    const stop = (e: Event) => e.stopPropagation();
+    content.addEventListener('click', stop);
+    content.addEventListener('mousedown', stop);
+    content.addEventListener('pointerdown', stop);
+    content.addEventListener('change', stop);
+    content.addEventListener('confirm', stop);
 
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];

@@ -345,6 +345,10 @@ function doRender(self: TaoWuPanelThis): void {
     const debugLines: string[] = [];
     debugLines.push('componentType: "' + self.componentType + '"');
     debugLines.push('nodeUuid: ' + self.nodeUuid);
+    const ctlDump = properties.get('configTableList');
+    if (ctlDump) debugLines.push('configTableList: ' + JSON.stringify(ctlDump).substring(0, 500));
+    const cmDump = properties.get('configMap');
+    if (cmDump) debugLines.push('configMap: ' + JSON.stringify(cmDump).substring(0, 500));
     showDebug(self, debugLines.join('\n'));
 
     // 使用 nodeUuid 作为 set-property 的 uuid
@@ -396,20 +400,22 @@ function doRender(self: TaoWuPanelThis): void {
         content.appendChild(el);
     }
 
-    // 渲染后: 恢复 ui-section 展开状态
-    const newSections = content.querySelectorAll('ui-section');
-    newSections.forEach((sec: any) => {
-        const header = sec.getAttribute('header');
-        if (header && self.sectionExpandState.has(header)) {
-            if (self.sectionExpandState.get(header)) {
-                sec.setAttribute('expand', '');
-            } else {
-                sec.removeAttribute('expand');
+    // 渲染后: 恢复展开状态，并阻止内容区域事件导致折叠
+    {
+        const newSections = content.querySelectorAll('ui-section');
+        newSections.forEach((sec: any) => {
+            const header = sec.getAttribute('header');
+            if (header && self.sectionExpandState.has(header)) {
+                if (self.sectionExpandState.get(header)) {
+                    sec.setAttribute('expand', '');
+                } else {
+                    sec.removeAttribute('expand');
+                }
             }
-        }
-    });
+        });
+    }
 
-    // 渲染完成，延迟解除标志
+    // 渲染完成，解除标志
     setTimeout(() => { self.rendering = false; }, 50);
 }
 
