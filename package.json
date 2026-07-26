@@ -1,0 +1,54 @@
+{
+    "$schema": "./@types/schema/package/index.json",
+    "package_version": 2,
+    "name": "taowu-inspector",
+    "version": "1.0.0",
+    "author": "TaoWu",
+    "editor": ">=3.8.5",
+    "main": "./dist/main.js",
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc -w"
+    },
+    "description": "TaoWu Inspector — 属性绘制插件",
+    "devDependencies": {
+        "@cocos/creator-types": "^3.8.5",
+        "@types/node": "^18.17.1",
+        "typescript": "^5.8.2"
+    },
+    "contributions": {
+        "inspector": {
+            "section": {
+                "node": {
+                    "TaoWuDemoComponent": "./dist/inspector/taowu-renderer.js"
+                }
+            }
+        },
+        "scene": {
+            "script": "./dist/scene-script.js"
+        },
+        "menu": [
+            {
+                "path": "TaoWuInspector/Install",
+                "label": "导入Runtime脚本",
+                "message": "installRuntime"
+            },
+            {
+                "path": "TaoWuInspector/Example",
+                "label": "导入示例",
+                "message": "importExample"
+            }
+        ],
+        "messages": {
+            "query-taowu-metadata": {
+                "methods": ["queryTaoWuMetadata"]
+            },
+            "installRuntime": {
+                "methods": ["installRuntime"]
+            },
+            "importExample": {
+                "methods": ["importExample"]
+            }
+        }
+    }
+}

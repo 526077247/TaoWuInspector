@@ -1,0 +1,633 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ExampleImporter = void 0;
+/** Runtime 脚本模板 */
+const RUNTIME_TEMPLATES = [
+    {
+        fileName: "TaoWuTypes.ts",
+        content: `/** TaoWu Inspector 属性元数据 */
+export interface ITaoWuPropertyMeta {
+    foldoutGroup?: string;
+    tabGroup?: string;
+    tabName?: string;
+    boxGroup?: string;
+    horizontalGroup?: string;
+    showIf?: string;
+    hideIf?: string;
+    labelText?: string;
+    readOnly?: boolean;
+    title?: string;
+    titleHorizontalLine?: boolean;
+    infoBox?: { message: string; type: 'info' | 'warning' | 'error' };
+    propertyOrder?: number;
+    onValueChanged?: string;
+    range?: { min: number; max: number };
+    textarea?: boolean;
+    color?: boolean;
+    tableList?: boolean;
+}
+
+export interface ITaoWuClassMeta {
+    [propertyKey: string]: ITaoWuPropertyMeta;
+}
+`
+    },
+    {
+        fileName: "TaoWuRegistry.ts",
+        content: `import { ITaoWuClassMeta, ITaoWuPropertyMeta } from "./TaoWuTypes";
+
+/**
+ * TaoWu Inspector 元数据注册中心
+ * 装饰器在类定义时调用 register 写入元数据
+ * 场景脚本通过 globalThis.__TAOWU_REGISTRY__ 读取
+ */
+export class TaoWuRegistry {
+    private static metadata: Map<string, ITaoWuClassMeta> = new Map();
+
+    static register(className: string, propertyKey: string, meta: Partial<ITaoWuPropertyMeta>): void {
+        if (!this.metadata.has(className)) {
+            this.metadata.set(className, {});
+        }
+        const classMeta = this.metadata.get(className)!;
+        if (!classMeta[propertyKey]) {
+            classMeta[propertyKey] = {};
+        }
+        Object.assign(classMeta[propertyKey], meta);
+    }
+
+    static getMetadata(className: string): ITaoWuClassMeta | null {
+        return this.metadata.get(className) || null;
+    }
+
+    static hasMetadata(className: string): boolean {
+        return this.metadata.has(className);
+    }
+
+    static clear(): void {
+        this.metadata.clear();
+    }
+}
+
+declare global {
+    // eslint-disable-next-line no-var
+    var __TAOWU_REGISTRY__: typeof TaoWuRegistry;
+}
+globalThis.__TAOWU_REGISTRY__ = TaoWuRegistry;
+`
+    },
+    {
+        fileName: "TaoWuDecorators.ts",
+        content: `import { TaoWuRegistry } from "./TaoWuRegistry";
+
+function getClassName(target: any): string {
+    const ctor = target.constructor;
+    return ctor.name || ctor.toString().match(/class\\s+(\\w+)/)?.[1] || '';
+}
+
+/** 折叠分组 */
+export function FoldoutGroup(groupPath: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { foldoutGroup: groupPath });
+    };
+}
+
+/** Tab 标签页分组 */
+export function TabGroup(groupName: string, tabName: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { tabGroup: groupName, tabName });
+    };
+}
+
+/** 盒子分组 */
+export function BoxGroup(groupName: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { boxGroup: groupName });
+    };
+}
+
+/** 水平分组 */
+export function HorizontalGroup(groupName: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { horizontalGroup: groupName });
+    };
+}
+
+/** 当指定属性值为 true 时显示 */
+export function ShowIf(conditionProperty: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { showIf: conditionProperty });
+    };
+}
+
+/** 当指定属性值为 true 时隐藏 */
+export function HideIf(conditionProperty: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { hideIf: conditionProperty });
+    };
+}
+
+/** 自定义标签文本 */
+export function LabelText(text: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { labelText: text });
+    };
+}
+
+/** 只读 */
+export function ReadOnly() {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { readOnly: true });
+    };
+}
+
+/** 属性排序 */
+export function PropertyOrder(order: number) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { propertyOrder: order });
+    };
+}
+
+/** 数值范围滑块 */
+export function PropertyRange(min: number, max: number) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { range: { min, max } });
+    };
+}
+
+/** 标题 */
+export function Title(title: string, horizontalLine: boolean = true) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, {
+            title, titleHorizontalLine: horizontalLine
+        });
+    };
+}
+
+/** 信息提示框 */
+export function InfoBox(message: string, type: 'info' | 'warning' | 'error' = 'info') {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { infoBox: { message, type } });
+    };
+}
+
+/** 多行文本 */
+export function TextArea() {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { textarea: true });
+    };
+}
+
+/** 表格列表 */
+export function TableList() {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { tableList: true });
+    };
+}
+`
+    }
+];
+/** Example 脚本和场景模板 */
+const EXAMPLE_TEMPLATES = [
+    {
+        fileName: "TaoWuDemoComponent.ts",
+        content: `import { _decorator, Component, Color, Vec3, CCInteger } from 'cc';
+const { ccclass, property } = _decorator;
+
+@ccclass('MapEntry')
+class MapEntry {
+    @property
+    key: string = '';
+    @property
+    value: number = 0;
+}
+
+import {
+    FoldoutGroup,
+    TabGroup,
+    BoxGroup,
+    ShowIf,
+    HideIf,
+    LabelText,
+    ReadOnly,
+    PropertyRange,
+    Title,
+    InfoBox,
+    PropertyOrder,
+    TextArea,
+    TableList
+} from '../Runtime/TaoWuDecorators';
+
+@ccclass('TaoWuDemoComponent')
+export class TaoWuDemoComponent extends Component {
+
+    // ─── 基础属性 (无分组) ───
+    @property
+    componentName: string = 'Demo';
+
+    @property
+    @PropertyRange(0, 100)
+    health: number = 100;
+
+    // ─── 折叠分组: 角色设置 ───
+    @property
+    @FoldoutGroup('角色设置')
+    @LabelText("移动速度")
+    moveSpeed: number = 5;
+
+    @property
+    @FoldoutGroup('角色设置')
+    jumpHeight: number = 3;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @ShowIf('canFly')
+    flySpeed: number = 10;
+
+    @property
+    @FoldoutGroup('角色设置')
+    canFly: boolean = false;
+
+    // ─── Tab 分组: 武器配置 ───
+    @property
+    @TabGroup('武器配置', '近战')
+    meleeDamage: number = 20;
+
+    @property
+    @TabGroup('武器配置', '近战')
+    meleeRange: number = 2;
+
+    @property
+    @TabGroup('武器配置', '远程')
+    rangedDamage: number = 15;
+
+    @property
+    @TabGroup('武器配置', '远程')
+    @PropertyRange(1, 100)
+    attackRange: number = 50;
+
+    @property
+    @TabGroup('武器配置', '魔法')
+    magicDamage: number = 30;
+
+    @property
+    @TabGroup('武器配置', '魔法')
+    @LabelText("法力消耗")
+    manaCost: number = 10;
+
+    // ─── 盒子分组: 外观设置 ───
+    @property
+    @BoxGroup('外观设置')
+    mainColor: Color = new Color(255, 255, 255, 255);
+
+    @property
+    @BoxGroup('外观设置')
+    accentColor: Color = new Color(100, 149, 237, 255);
+
+    @property
+    @BoxGroup('外观设置')
+    @HideIf('useDefaultSize')
+    customSize: Vec3 = new Vec3(1, 1, 1);
+
+    @property
+    @BoxGroup('外观设置')
+    useDefaultSize: boolean = true;
+
+    // ─── 装饰性元素 ───
+    @property
+    @Title('高级设置', true)
+    @InfoBox('以下属性影响游戏核心逻辑，请谨慎修改', 'warning')
+    advancedEnabled: boolean = false;
+
+    @property
+    @ReadOnly()
+    @PropertyOrder(100)
+    debugId: string = 'AUTO_GENERATED';
+
+    @property
+    @TextArea()
+    @FoldoutGroup('角色设置')
+    description: string = '角色描述';
+
+    // ─── List / TableList / Map ───
+    @property([CCInteger])
+    @FoldoutGroup('列表与字典')
+    defaultList: number[] = [1, 2, 3];
+
+    @property([CCInteger])
+    @TableList()
+    @FoldoutGroup('列表与字典')
+    damageList: number[] = [10, 20, 30];
+
+    @property([Vec3])
+    @TableList()
+    @FoldoutGroup('列表与字典')
+    positionList: Vec3[] = [new Vec3(0, 0, 0), new Vec3(1, 1, 1)];
+
+    @property({ type: [MapEntry] })
+    @FoldoutGroup('列表与字典')
+    configMap: MapEntry[] = [
+        { key: 'attack', value: 10 } as any,
+        { key: 'defense', value: 5 } as any,
+    ];
+
+    @property({ type: [MapEntry] })
+    @TableList()
+    @FoldoutGroup('列表与字典')
+    configTableList: MapEntry[] = [
+        { key: 'speed', value: 8 } as any,
+        { key: 'luck', value: 3 } as any,
+    ];
+}
+`
+    }
+];
+const ROOT_DIR = "db://assets/TaoWuInspector";
+const RUNTIME_DIR = `${ROOT_DIR}/Runtime`;
+const EXAMPLE_DIR = `${ROOT_DIR}/Example`;
+class ExampleImporter {
+    /**
+     * 导入 Runtime 脚本到 assets/TaoWuInspector/Runtime
+     */
+    static async installRuntime() {
+        console.log("[TaoWuInspector] 开始导入 Runtime 脚本...");
+        await ExampleImporter.ensureDir(RUNTIME_DIR);
+        for (const tpl of RUNTIME_TEMPLATES) {
+            const url = `${RUNTIME_DIR}/${tpl.fileName}`;
+            await ExampleImporter.createOrUpdate(url, tpl.content);
+        }
+        console.log("[TaoWuInspector] 等待脚本编译...");
+        await ExampleImporter.waitFileReady(`${RUNTIME_DIR}/TaoWuDecorators.ts`);
+        Editor.Dialog.info("Runtime 导入完成", {
+            detail: "已创建 assets/TaoWuInspector/Runtime 目录，包含:\n• TaoWuTypes.ts\n• TaoWuRegistry.ts\n• TaoWuDecorators.ts",
+            buttons: ["确定"],
+        });
+        console.log("[TaoWuInspector] Runtime 导入完成");
+    }
+    /**
+     * 导入示例到 assets/TaoWuInspector/Example
+     */
+    static async importExample() {
+        console.log("[TaoWuInspector] 开始导入示例...");
+        // 检查 Runtime 是否已安装
+        const runtimeCheck = await Editor.Message.request("asset-db", "query-asset-info", RUNTIME_DIR);
+        if (!runtimeCheck) {
+            Editor.Dialog.warn("请先导入 Runtime", {
+                detail: "请先点击菜单 TaoWuInspector/Install 导入 Runtime 脚本，再导入示例。",
+                buttons: ["确定"],
+            });
+            return;
+        }
+        await ExampleImporter.ensureDir(EXAMPLE_DIR);
+        // 创建示例脚本
+        for (const tpl of EXAMPLE_TEMPLATES) {
+            const url = `${EXAMPLE_DIR}/${tpl.fileName}`;
+            await ExampleImporter.createOrUpdate(url, tpl.content);
+        }
+        console.log("[TaoWuInspector] 等待脚本编译...");
+        await ExampleImporter.waitFileReady(`${EXAMPLE_DIR}/TaoWuDemoComponent.ts`);
+        // 创建场景
+        const sceneUrl = `${EXAMPLE_DIR}/TaoWuDemo.scene`;
+        const sceneContent = ExampleImporter.buildSceneJson();
+        const sceneInfo = await ExampleImporter.createOrUpdate(sceneUrl, sceneContent);
+        if (!sceneInfo) {
+            console.error("[TaoWuInspector] 创建场景失败");
+            return;
+        }
+        console.log("[TaoWuInspector] 场景创建成功: TaoWuDemo.scene");
+        await ExampleImporter.delay(500);
+        await ExampleImporter.openSceneAndAddNode(sceneInfo.uuid);
+        Editor.Dialog.info("示例导入完成", {
+            detail: "已创建 assets/TaoWuInspector/Example 目录，包含:\n• TaoWuDemoComponent.ts\n• TaoWuDemo.scene\n\n请选中场景中的节点查看 Inspector 效果。",
+            buttons: ["确定"],
+        });
+        console.log("[TaoWuInspector] 示例导入完成");
+    }
+    /**
+     * 打开场景并添加一个带 TaoWuDemoComponent 的节点
+     */
+    static async openSceneAndAddNode(sceneUuid) {
+        try {
+            await Editor.Message.request("asset-db", "open-asset", sceneUuid);
+            let ready = false;
+            for (let i = 0; i < 20; i++) {
+                ready = await Editor.Message.request("scene", "query-is-ready");
+                if (ready)
+                    break;
+                await ExampleImporter.delay(200);
+            }
+            if (!ready) {
+                console.warn("[TaoWuInspector] 场景未就绪，跳过节点创建");
+                return;
+            }
+            // 查询场景节点树获取根节点
+            const tree = await Editor.Message.request("scene", "query-node-tree");
+            if (!tree || !tree.uuid) {
+                console.warn("[TaoWuInspector] 无法获取场景根节点");
+                return;
+            }
+            // 在场景根节点下创建子节点
+            const nodeResult = await Editor.Message.request("scene", "create-node", {
+                parent: tree.uuid,
+                name: "TaoWuDemoNode",
+            });
+            // create-node 返回格式不确定，统一提取 uuid 字符串
+            let nodeUuid = null;
+            if (typeof nodeResult === 'string') {
+                nodeUuid = nodeResult;
+            }
+            else if (Array.isArray(nodeResult)) {
+                const first = nodeResult[0];
+                nodeUuid = typeof first === 'string' ? first : (first?.uuid || null);
+            }
+            else if (nodeResult && typeof nodeResult === 'object') {
+                const obj = nodeResult;
+                nodeUuid = obj.uuid || obj.value || null;
+            }
+            if (!nodeUuid) {
+                console.warn("[TaoWuInspector] 创建节点失败，无返回 UUID");
+                return;
+            }
+            // 等待节点创建完成
+            await ExampleImporter.delay(300);
+            // 添加 TaoWuDemoComponent 组件
+            const compResult = await Editor.Message.request("scene", "create-component", {
+                uuid: nodeUuid,
+                component: "TaoWuDemoComponent",
+            });
+            if (compResult) {
+                await Editor.Message.request("scene", "save-scene");
+                console.log("[TaoWuInspector] 节点创建成功: TaoWuDemoNode");
+                // 选中节点方便用户查看
+                Editor.Selection.select("node", nodeUuid);
+            }
+            else {
+                console.warn("[TaoWuInspector] 添加组件失败，请手动添加");
+            }
+        }
+        catch (e) {
+            console.warn("[TaoWuInspector] 添加节点失败，场景和脚本已创建，请手动添加组件:", e);
+        }
+    }
+    /** 确保目录存在 */
+    static async ensureDir(url) {
+        const existing = await Editor.Message.request("asset-db", "query-asset-info", url);
+        if (existing)
+            return;
+        await Editor.Message.request("asset-db", "create-asset", url, null);
+    }
+    /** 创建或覆盖文件 */
+    static async createOrUpdate(url, content) {
+        const existing = await Editor.Message.request("asset-db", "query-asset-info", url);
+        if (existing) {
+            await Editor.Message.request("asset-db", "delete-asset", url);
+        }
+        const info = await Editor.Message.request("asset-db", "create-asset", url, content);
+        if (info) {
+            console.log(`[TaoWuInspector] 创建文件: ${url}`);
+        }
+        else {
+            console.error(`[TaoWuInspector] 创建文件失败: ${url}`);
+        }
+        return info;
+    }
+    /** 等待文件入库 + 编译 */
+    static async waitFileReady(url) {
+        for (let i = 0; i < 30; i++) {
+            const info = await Editor.Message.request("asset-db", "query-asset-info", url);
+            if (info)
+                break;
+            await ExampleImporter.delay(300);
+        }
+        await ExampleImporter.delay(2000);
+    }
+    /** 构建场景 JSON */
+    static buildSceneJson() {
+        return JSON.stringify([
+            {
+                "__type__": "cc.SceneAsset",
+                "_name": "TaoWuDemo",
+                "_objFlags": 0,
+                "__editorExtras__": {},
+                "_native": "",
+                "scene": { "__id__": 1 }
+            },
+            {
+                "__type__": "cc.Scene",
+                "_name": "TaoWuDemo",
+                "_objFlags": 0,
+                "__editorExtras__": {},
+                "_parent": null,
+                "_children": [],
+                "_active": true,
+                "_components": [],
+                "_prefab": null,
+                "_lpos": { "__type__": "cc.Vec3", "x": 0, "y": 0, "z": 0 },
+                "_lrot": { "__type__": "cc.Quat", "x": 0, "y": 0, "z": 0, "w": 1 },
+                "_lscale": { "__type__": "cc.Vec3", "x": 1, "y": 1, "z": 1 },
+                "_mobility": 0,
+                "_layer": 1073741824,
+                "_euler": { "__type__": "cc.Vec3", "x": 0, "y": 0, "z": 0 },
+                "autoReleaseAssets": false,
+                "_globals": { "__id__": 2 }
+            },
+            {
+                "__type__": "cc.SceneGlobals",
+                "ambient": { "__id__": 3 },
+                "shadows": { "__id__": 4 },
+                "_skybox": { "__id__": 5 },
+                "fog": { "__id__": 6 },
+                "octree": { "__id__": 7 },
+                "skin": { "__id__": 8 },
+                "lightProbeInfo": { "__id__": 9 },
+                "postSettings": { "__id__": 10 },
+                "bakedWithStationaryMainLight": false,
+                "bakedWithHighpLightmap": false
+            },
+            {
+                "__type__": "cc.AmbientInfo",
+                "_skyColorHDR": { "__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0.520833125 },
+                "_skyColor": { "__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0.520833125 },
+                "_skyIllumHDR": 20000,
+                "_skyIllum": 20000,
+                "_groundAlbedoHDR": { "__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0 },
+                "_groundAlbedo": { "__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0 },
+                "_skyColorLDR": { "__type__": "cc.Vec4", "x": 0.2, "y": 0.5, "z": 0.8, "w": 1 },
+                "_skyIllumLDR": 20000,
+                "_groundAlbedoLDR": { "__type__": "cc.Vec4", "x": 0.2, "y": 0.2, "z": 0.2, "w": 1 }
+            },
+            {
+                "__type__": "cc.ShadowsInfo",
+                "_enabled": false,
+                "_type": 0,
+                "_normal": { "__type__": "cc.Vec3", "x": 0, "y": 1, "z": 0 },
+                "_distance": 0,
+                "_planeBias": 1,
+                "_shadowColor": { "__type__": "cc.Color", "r": 76, "g": 76, "b": 76, "a": 255 },
+                "_maxReceived": 4,
+                "_size": { "__type__": "cc.Vec2", "x": 512, "y": 512 }
+            },
+            {
+                "__type__": "cc.SkyboxInfo",
+                "_envLightingType": 0,
+                "_envmapHDR": null,
+                "_envmap": null,
+                "_envmapLDR": null,
+                "_diffuseMapHDR": null,
+                "_diffuseMapLDR": null,
+                "_enabled": false,
+                "_useHDR": true,
+                "_editableMaterial": null,
+                "_reflectionHDR": null,
+                "_reflectionLDR": null,
+                "_rotationAngle": 0
+            },
+            {
+                "__type__": "cc.FogInfo",
+                "_type": 0,
+                "_fogColor": { "__type__": "cc.Color", "r": 200, "g": 200, "b": 200, "a": 255 },
+                "_enabled": false,
+                "_fogDensity": 0.3,
+                "_fogStart": 0.5,
+                "_fogEnd": 300,
+                "_fogAtten": 5,
+                "_fogTop": 1.5,
+                "_fogRange": 1.2,
+                "_accurate": false
+            },
+            {
+                "__type__": "cc.OctreeInfo",
+                "_enabled": false,
+                "_minPos": { "__type__": "cc.Vec3", "x": -1024, "y": -1024, "z": -1024 },
+                "_maxPos": { "__type__": "cc.Vec3", "x": 1024, "y": 1024, "z": 1024 },
+                "_depth": 8
+            },
+            {
+                "__type__": "cc.SkinInfo",
+                "_enabled": false,
+                "_blurRadius": 0.01,
+                "_sssIntensity": 3
+            },
+            {
+                "__type__": "cc.LightProbeInfo",
+                "_giScale": 1,
+                "_giSamples": 1024,
+                "_bounces": 2,
+                "_reduceRinging": 0,
+                "_showProbe": true,
+                "_showWireframe": true,
+                "_showConvex": false,
+                "_data": null,
+                "_lightProbeSphereVolume": 1
+            },
+            {
+                "__type__": "cc.PostSettingsInfo",
+                "_toneMappingType": 0
+            }
+        ], null, 2);
+    }
+    /** 延迟 */
+    static delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+}
+exports.ExampleImporter = ExampleImporter;
