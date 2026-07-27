@@ -13,7 +13,8 @@ export function createFoldoutGroup(
     compIndex: number,
     taowuMeta: { [key: string]: ITaoWuPropertyMeta },
     isRendering?: IsRendering,
-    onPropChanged?: OnPropChanged
+    onPropChanged?: OnPropChanged,
+    elementMetadata?: any
 ): HTMLElement {
     const section = document.createElement('ui-section');
     section.className = 'taowu-foldout';
@@ -35,7 +36,7 @@ export function createFoldoutGroup(
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
             content.appendChild(el);
         }
     }
@@ -53,7 +54,8 @@ export function createTabGroup(
     compIndex: number,
     taowuMeta: { [key: string]: ITaoWuPropertyMeta },
     isRendering?: IsRendering,
-    onPropChanged?: OnPropChanged
+    onPropChanged?: OnPropChanged,
+    elementMetadata?: any
 ): HTMLElement {
     const container = document.createElement('div');
     container.className = 'taowu-tab-group';
@@ -79,7 +81,7 @@ export function createTabGroup(
         for (const key of propKeys) {
             const propDump = dump.value[key] || dump[key];
             if (propDump) {
-                const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+                const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
                 tabContent.appendChild(el);
             }
         }
@@ -110,7 +112,8 @@ export function createBoxGroup(
     compIndex: number,
     taowuMeta: { [key: string]: ITaoWuPropertyMeta },
     isRendering?: IsRendering,
-    onPropChanged?: OnPropChanged
+    onPropChanged?: OnPropChanged,
+    elementMetadata?: any
 ): HTMLElement {
     const container = document.createElement('div');
     container.className = 'taowu-box-group';
@@ -126,7 +129,7 @@ export function createBoxGroup(
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
             content.appendChild(el);
         }
     }
@@ -144,7 +147,8 @@ export function createHorizontalGroup(
     compIndex: number,
     taowuMeta: { [key: string]: ITaoWuPropertyMeta },
     isRendering?: IsRendering,
-    onPropChanged?: OnPropChanged
+    onPropChanged?: OnPropChanged,
+    elementMetadata?: any
 ): HTMLElement {
     const container = document.createElement('div');
     container.className = 'taowu-horizontal-group';
@@ -152,7 +156,7 @@ export function createHorizontalGroup(
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
             el.classList.add('taowu-horizontal-item');
             container.appendChild(el);
         }

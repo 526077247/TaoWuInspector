@@ -6,7 +6,7 @@ exports.createBoxGroup = createBoxGroup;
 exports.createHorizontalGroup = createHorizontalGroup;
 const property_drawer_1 = require("./property-drawer");
 /** 创建折叠分组 */
-function createFoldoutGroup(groupPath, propKeys, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged) {
+function createFoldoutGroup(groupPath, propKeys, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata) {
     const section = document.createElement('ui-section');
     section.className = 'taowu-foldout';
     section.setAttribute('expand', '');
@@ -24,7 +24,7 @@ function createFoldoutGroup(groupPath, propKeys, dump, compUuid, compIndex, taow
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+            const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
             content.appendChild(el);
         }
     }
@@ -32,7 +32,7 @@ function createFoldoutGroup(groupPath, propKeys, dump, compUuid, compIndex, taow
     return section;
 }
 /** 创建 Tab 分组 */
-function createTabGroup(groupName, tabs, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged) {
+function createTabGroup(groupName, tabs, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata) {
     const container = document.createElement('div');
     container.className = 'taowu-tab-group';
     container.dataset.tabGroup = groupName;
@@ -52,7 +52,7 @@ function createTabGroup(groupName, tabs, dump, compUuid, compIndex, taowuMeta, i
         for (const key of propKeys) {
             const propDump = dump.value[key] || dump[key];
             if (propDump) {
-                const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+                const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
                 tabContent.appendChild(el);
             }
         }
@@ -71,7 +71,7 @@ function createTabGroup(groupName, tabs, dump, compUuid, compIndex, taowuMeta, i
     return container;
 }
 /** 创建盒子分组 */
-function createBoxGroup(groupName, propKeys, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged) {
+function createBoxGroup(groupName, propKeys, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata) {
     const container = document.createElement('div');
     container.className = 'taowu-box-group';
     const header = document.createElement('div');
@@ -83,7 +83,7 @@ function createBoxGroup(groupName, propKeys, dump, compUuid, compIndex, taowuMet
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+            const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
             content.appendChild(el);
         }
     }
@@ -91,13 +91,13 @@ function createBoxGroup(groupName, propKeys, dump, compUuid, compIndex, taowuMet
     return container;
 }
 /** 创建水平分组 */
-function createHorizontalGroup(groupName, propKeys, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged) {
+function createHorizontalGroup(groupName, propKeys, dump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata) {
     const container = document.createElement('div');
     container.className = 'taowu-horizontal-group';
     for (const key of propKeys) {
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged);
+            const el = (0, property_drawer_1.createPropertyElement)(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
             el.classList.add('taowu-horizontal-item');
             container.appendChild(el);
         }

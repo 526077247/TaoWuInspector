@@ -194,9 +194,56 @@ const { ccclass, property } = _decorator;
 @ccclass('MapEntry')
 class MapEntry {
     @property
+    @LabelText("测试Key")
     key: string = '';
     @property
     value: number = 0;
+}
+
+@ccclass('WeaponConfig')
+class WeaponConfig {
+    @property
+    @LabelText("武器名称")
+    weaponName: string = '';
+    @property
+    @LabelText("伤害")
+    damage: number = 0;
+    @property
+    @LabelText("暴击率")
+    critRate: number = 0;
+    @property
+    @LabelText("元素类型")
+    elementType: string = 'none';
+    @property
+    @LabelText("耐久度")
+    durability: number = 100;
+    // 嵌套 class
+    @property({ type: MapEntry })
+    @LabelText("附魔属性")
+    enchant: MapEntry = (() => { const e = new MapEntry(); e.key = 'fire'; e.value = 5; return e; })();
+}
+
+@ccclass('SkillConfig')
+class SkillConfig {
+    @property
+    @LabelText("技能名称")
+    skillName: string = '';
+    @property
+    @LabelText("冷却时间")
+    cooldown: number = 0;
+    @property
+    @LabelText("法力消耗")
+    manaCost: number = 0;
+    @property
+    @LabelText("技能等级")
+    level: number = 1;
+    @property
+    @LabelText("是否可用")
+    enabled: boolean = true;
+    // 嵌套 class
+    @property({ type: WeaponConfig })
+    @LabelText("所需武器")
+    requiredWeapon: WeaponConfig = (() => { const w = new WeaponConfig(); w.weaponName = '无'; w.damage = 0; w.critRate = 0; w.elementType = 'none'; w.durability = 0; return w; })();
 }
 
 import {
@@ -335,6 +382,44 @@ export class TaoWuDemoComponent extends Component {
         (() => { const e = new MapEntry(); e.key = 'speed'; e.value = 8; return e; })(),
         (() => { const e = new MapEntry(); e.key = 'luck'; e.value = 3; return e; })(),
     ];
+
+    // ─── 复杂嵌套 TableList ───
+    @property({ type: [WeaponConfig] })
+    @TableList()
+    @FoldoutGroup('装备配置')
+    weaponList: WeaponConfig[] = [
+        (() => { const w = new WeaponConfig(); w.weaponName = '烈焰剑'; w.damage = 45; w.critRate = 0.15; w.elementType = 'fire'; w.durability = 200; return w; })(),
+        (() => { const w = new WeaponConfig(); w.weaponName = '寒冰弓'; w.damage = 30; w.critRate = 0.25; w.elementType = 'ice'; w.durability = 150; return w; })(),
+        (() => { const w = new WeaponConfig(); w.weaponName = '雷霆杖'; w.damage = 55; w.critRate = 0.1; w.elementType = 'thunder'; w.durability = 100; return w; })(),
+    ];
+
+    @property({ type: [SkillConfig] })
+    @TableList()
+    @FoldoutGroup('装备配置')
+    skillList: SkillConfig[] = [
+        (() => { const s = new SkillConfig(); s.skillName = '火球术'; s.cooldown = 5; s.manaCost = 20; s.level = 3; s.enabled = true; return s; })(),
+        (() => { const s = new SkillConfig(); s.skillName = '治疗术'; s.cooldown = 10; s.manaCost = 30; s.level = 2; s.enabled = true; return s; })(),
+        (() => { const s = new SkillConfig(); s.skillName = '隐身'; s.cooldown = 30; s.manaCost = 50; s.level = 1; s.enabled = false; return s; })(),
+    ];
+
+    @property({ type: [MapEntry] })
+    @FoldoutGroup('装备配置')
+    extraConfig: MapEntry[] = [
+        (() => { const e = new MapEntry(); e.key = 'setBonus'; e.value = 10; return e; })(),
+    ];
+
+    // ─── 嵌套 class 属性 ───
+    @property({ type: WeaponConfig })
+    @FoldoutGroup('嵌套对象')
+    equippedWeapon: WeaponConfig = (() => { const w = new WeaponConfig(); w.weaponName = '初始武器'; w.damage = 10; w.critRate = 0.05; w.elementType = 'physical'; w.durability = 50; return w; })();
+
+    @property({ type: SkillConfig })
+    @FoldoutGroup('嵌套对象')
+    primarySkill: SkillConfig = (() => { const s = new SkillConfig(); s.skillName = '基础攻击'; s.cooldown = 1; s.manaCost = 0; s.level = 1; s.enabled = true; return s; })();
+
+    @property({ type: MapEntry })
+    @FoldoutGroup('嵌套对象')
+    baseStats: MapEntry = (() => { const e = new MapEntry(); e.key = 'power'; e.value = 100; return e; })();
 }
 `
     }
@@ -468,19 +553,21 @@ export class ExampleImporter {
             await ExampleImporter.delay(300);
 
             // 添加 TaoWuDemoComponent 组件
-            const compResult = await Editor.Message.request("scene", "create-component", {
-                uuid: nodeUuid,
-                component: "TaoWuDemoComponent",
-            });
-
-            if (compResult) {
-                await Editor.Message.request("scene", "save-scene");
-                console.log("[TaoWuInspector] 节点创建成功: TaoWuDemoNode");
-                // 选中节点方便用户查看
-                Editor.Selection.select("node", nodeUuid);
-            } else {
-                console.warn("[TaoWuInspector] 添加组件失败，请手动添加");
+            // create-component 返回值不可靠（成功也可能返回 null），只调用一次，始终保存场景
+            try {
+                await Editor.Message.request("scene", "create-component", {
+                    uuid: nodeUuid,
+                    component: "TaoWuDemoComponent",
+                });
+            } catch (e) {
+                console.warn("[TaoWuInspector] 添加组件时出错:", e);
             }
+
+            // 始终保存场景
+            await Editor.Message.request("scene", "save-scene");
+            console.log("[TaoWuInspector] 节点创建成功: TaoWuDemoNode");
+            // 选中节点方便用户查看
+            Editor.Selection.select("node", nodeUuid);
         } catch (e) {
             console.warn("[TaoWuInspector] 添加节点失败，场景和脚本已创建，请手动添加组件:", e);
         }
@@ -493,11 +580,18 @@ export class ExampleImporter {
         await Editor.Message.request("asset-db", "create-asset", url, null);
     }
 
-    /** 创建或覆盖文件 */
+    /** 创建或覆盖文件（已存在时原地更新，保留 .meta 和 UUID） */
     private static async createOrUpdate(url: string, content: string): Promise<any> {
         const existing = await Editor.Message.request("asset-db", "query-asset-info", url);
         if (existing) {
-            await Editor.Message.request("asset-db", "delete-asset", url);
+            const fs = require('fs');
+            const path = require('path');
+            const fsPath = path.join(Editor.Project.path, url.replace('db://', ''));
+            fs.writeFileSync(fsPath, content, 'utf-8');
+            // 通知 asset-db 重新导入，触发脚本重编译
+            await Editor.Message.request("asset-db", "refresh-asset", url);
+            console.log(`[TaoWuInspector] 更新文件: ${url}`);
+            return existing;
         }
         const info = await Editor.Message.request("asset-db", "create-asset", url, content);
         if (info) {
@@ -515,7 +609,8 @@ export class ExampleImporter {
             if (info) break;
             await ExampleImporter.delay(300);
         }
-        await ExampleImporter.delay(2000);
+        // 等待脚本编译完成
+        await ExampleImporter.delay(3000);
     }
 
     /** 构建场景 JSON */

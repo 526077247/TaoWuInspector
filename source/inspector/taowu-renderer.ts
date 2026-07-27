@@ -18,7 +18,8 @@ const CSS_STYLE = `
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 8px 4px;
+    padding: 8px 0;
+    box-sizing: border-box;
 }
 .taowu-loading {
     text-align: center;
@@ -31,33 +32,8 @@ const CSS_STYLE = `
     flex-direction: column;
     gap: 2px;
 }
-.taowu-prop {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin: 2px 0;
-    min-height: 24px;
-}
-.taowu-prop-label {
-    flex: 0 0 130px;
-    font-size: 12px;
-    color: #ccc;
-    text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    padding-top: 3px;
-}
-.taowu-prop-content {
-    flex: 1;
-    min-width: 0;
-}
-.taowu-prop-content > * {
+.taowu-content {
     width: 100%;
-}
-.taowu-prop-content ui-input[multiline] {
-    vertical-align: top;
-    display: block;
 }
 .taowu-title {
     display: flex;
@@ -105,9 +81,9 @@ const CSS_STYLE = `
     border-radius: 4px;
 }
 .taowu-foldout-content {
-    padding: 4px 0 4px 12px;
+    padding: 4px 8px;
     border-left: 2px solid #444;
-    margin-left: 8px;
+    margin-left: 0;
 }
 .taowu-tab-group {
     margin: 4px 0;
@@ -220,7 +196,38 @@ const CSS_STYLE = `
 .taowu-collection-field > * {
     width: 100%;
 }
-/* TableList 内部元素 Box */
+/* TableList 表格行风格 */
+.taowu-table-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    border-bottom: 1px solid #333;
+}
+.taowu-table-row:last-child { border-bottom: none; }
+.taowu-table-header {
+    font-size: 11px;
+    font-weight: 600;
+    color: #aaa;
+    background: #2a2a2a;
+    border-bottom: 1px solid #444;
+}
+.taowu-table-header .taowu-table-cell {
+    text-align: center;
+    padding: 2px 4px;
+}
+.taowu-table-index {
+    flex: 0 0 24px;
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+}
+.taowu-table-cell {
+    flex: 1;
+    min-width: 0;
+}
+.taowu-table-cell > * { width: 100%; }
+/* TableList 内部元素 Box (Vec3/Color 等仍用折叠盒子) */
 .taowu-collection-item-box {
     margin: 2px 0;
     border: 1px solid #3a3a3a;
@@ -295,6 +302,7 @@ export const $ = {
 interface TaoWuPanelThis extends Selector<typeof $> {
     dump: any;
     taowuMetadata: any;
+    elementMetadata: any;
     metadataLoading: boolean;
     metadataRequested: boolean;
     compIndex: number;
@@ -351,12 +359,29 @@ function doRender(self: TaoWuPanelThis): void {
     if (cmDump) debugLines.push('configMap: ' + JSON.stringify(cmDump).substring(0, 500));
     showDebug(self, debugLines.join('\n'));
 
-    // 使用 nodeUuid 作为 set-property 的 uuid
-    const propUuid = self.nodeUuid;
+    // 使用 compUuid 作为 set-property 的 uuid
+    const propUuid = self.compUuid || self.nodeUuid;
     const isRendering = () => self.rendering;
     const onPropChanged = () => {};
 
+    // 存储 rerender 回调到 DOM，供 property-drawer 在 set-property 后调用
+    // 接受可选的 (propName, newVal) 参数，手动 patch self.dump 以防 Cocos 的 update() 覆盖为旧值
+    (self.$.content as any).__taowuRerender = (changedProp?: string, newVal?: any) => {
+        if (changedProp !== undefined) {
+            const dumpValue = self.dump.value || self.dump;
+            if (dumpValue[changedProp]) {
+                dumpValue[changedProp].value = newVal;
+            }
+        }
+        if (conditionsChanged(self)) {
+            doRender(self);
+        } else {
+            updatePropDumps(self);
+        }
+    };
+
     const organized = organizeProperties(propKeys, taowuMeta);
+    const elementMetadata = self.elementMetadata || {};
 
     // 1. 无分组属性
     for (const key of organized.ungrouped) {
@@ -365,7 +390,7 @@ function doRender(self: TaoWuPanelThis): void {
 
         const propDump = properties.get(key);
         if (propDump) {
-            const el = createPropertyElement(key, propDump, propUuid, compIndex, meta, isRendering, onPropChanged);
+            const el = createPropertyElement(key, propDump, propUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata);
             content.appendChild(el);
         }
     }
@@ -374,13 +399,13 @@ function doRender(self: TaoWuPanelThis): void {
     for (const [groupPath, keys] of organized.foldoutGroups) {
         const visibleKeys = keys.filter(k => evaluateCondition(taowuMeta[k], properties));
         if (visibleKeys.length === 0) continue;
-        const el = createFoldoutGroup(groupPath, visibleKeys, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged);
+        const el = createFoldoutGroup(groupPath, visibleKeys, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata);
         content.appendChild(el);
     }
 
     // 3. Tab 分组
     for (const [groupName, tabs] of organized.tabGroups) {
-        const el = createTabGroup(groupName, tabs, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged);
+        const el = createTabGroup(groupName, tabs, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata);
         content.appendChild(el);
     }
 
@@ -388,7 +413,7 @@ function doRender(self: TaoWuPanelThis): void {
     for (const [groupName, keys] of organized.boxGroups) {
         const visibleKeys = keys.filter(k => evaluateCondition(taowuMeta[k], properties));
         if (visibleKeys.length === 0) continue;
-        const el = createBoxGroup(groupName, visibleKeys, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged);
+        const el = createBoxGroup(groupName, visibleKeys, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata);
         content.appendChild(el);
     }
 
@@ -396,7 +421,7 @@ function doRender(self: TaoWuPanelThis): void {
     for (const [groupName, keys] of organized.horizontalGroups) {
         const visibleKeys = keys.filter(k => evaluateCondition(taowuMeta[k], properties));
         if (visibleKeys.length === 0) continue;
-        const el = createHorizontalGroup(groupName, visibleKeys, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged);
+        const el = createHorizontalGroup(groupName, visibleKeys, self.dump, propUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata);
         content.appendChild(el);
     }
 
@@ -415,6 +440,26 @@ function doRender(self: TaoWuPanelThis): void {
         });
     }
 
+    // 记录当前可见属性，用于后续判断是否需要重建 DOM
+    const visibleKeys: string[] = [];
+    for (const key of organized.ungrouped) {
+        if (evaluateCondition(taowuMeta[key], properties)) visibleKeys.push(key);
+    }
+    for (const [_gp, keys] of organized.foldoutGroups) {
+        for (const k of keys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+    }
+    for (const [_gn, tabs] of organized.tabGroups) {
+        for (const [_tn, tabKeys] of tabs) {
+            for (const k of tabKeys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+        }
+    }
+    for (const [_gn, keys] of organized.boxGroups) {
+        for (const k of keys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+    }
+    for (const [_gn, keys] of organized.horizontalGroups) {
+        for (const k of keys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+    }
+    self._lastVisibleKeys = visibleKeys.join(',');
     // 渲染完成，解除标志
     setTimeout(() => { self.rendering = false; }, 50);
 }
@@ -434,6 +479,7 @@ export function update(this: TaoWuPanelThis, dump: any) {
     this.compIndex = getCompIndex(dump);
 
     const compUuid = dump.uuid?.value || dump.uuid || '';
+    this.compUuid = compUuid;
 
     if (!this.metadataRequested || !this.nodeUuid) {
         this.metadataRequested = true;
@@ -493,6 +539,19 @@ export function update(this: TaoWuPanelThis, dump: any) {
                 this.taowuMetadata = meta || {};
                 this.metadataLoading = false;
                 this.metaQueryResult = 'resolved';
+
+                // 获取数组元素类型的元数据 (如 MapEntry)
+                this.elementMetadata = {};
+                const props = getProperties(this.dump);
+                for (const [_k, pd] of props) {
+                    const et = pd.elementTypeData?.type;
+                    if (et && !et.startsWith('cc.') && !this.elementMetadata[et]) {
+                        try {
+                            const em = await Editor.Message.request('taowu-inspector', 'query-taowu-metadata', et);
+                            this.elementMetadata[et] = em || {};
+                        } catch (e) {}
+                    }
+                }
             } catch (err) {
                 this.taowuMetadata = {};
                 this.metadataLoading = false;
@@ -503,7 +562,93 @@ export function update(this: TaoWuPanelThis, dump: any) {
 
         initAsync();
     } else {
-        doRender(this);
+        // 已渲染过：检查 ShowIf/HideIf 条件是否变化
+        if (conditionsChanged(this)) {
+            // 条件变化，需要重建 DOM 以显示/隐藏属性
+            doRender(this);
+        } else {
+            // 条件未变，只更新 dump 值，避免滑动条断触
+            updatePropDumps(this);
+        }
+    }
+}
+
+/** 检查 ShowIf/HideIf 条件是否变化 */
+function conditionsChanged(self: TaoWuPanelThis): boolean {
+    if (!self._lastVisibleKeys) return false;
+    const properties = getProperties(self.dump);
+    const taowuMeta = self.taowuMetadata || {};
+    const organized = organizeProperties(Array.from(properties.keys()), taowuMeta);
+    const visibleKeys: string[] = [];
+    for (const key of organized.ungrouped) {
+        if (evaluateCondition(taowuMeta[key], properties)) visibleKeys.push(key);
+    }
+    for (const [_gp, keys] of organized.foldoutGroups) {
+        for (const k of keys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+    }
+    for (const [_gn, tabs] of organized.tabGroups) {
+        for (const [_tn, tabKeys] of tabs) {
+            for (const k of tabKeys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+        }
+    }
+    for (const [_gn, keys] of organized.boxGroups) {
+        for (const k of keys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+    }
+    for (const [_gn, keys] of organized.horizontalGroups) {
+        for (const k of keys) if (evaluateCondition(taowuMeta[k], properties)) visibleKeys.push(k);
+    }
+    const curr = visibleKeys.join(',');
+    const prev = self._lastVisibleKeys;
+    self._lastVisibleKeys = curr;
+    return curr !== prev;
+}
+
+/** 只更新已有 ui-prop 的 dump，不重建 DOM */
+function updatePropDumps(self: TaoWuPanelThis): void {
+    const content = self.$.content;
+    if (!content) return;
+
+    const properties = getProperties(self.dump);
+    const taowuMeta = self.taowuMetadata || {};
+    const organized = organizeProperties(Array.from(properties.keys()), taowuMeta);
+
+    // 收集所有可见属性的 key (按渲染顺序)
+    const allKeys: string[] = [];
+    for (const key of organized.ungrouped) {
+        const meta = taowuMeta[key];
+        if (!evaluateCondition(meta, properties)) continue;
+        allKeys.push(key);
+    }
+    for (const [groupPath, keys] of organized.foldoutGroups) {
+        for (const k of keys) {
+            if (evaluateCondition(taowuMeta[k], properties)) allKeys.push(k);
+        }
+    }
+    for (const [groupName, keys] of organized.boxGroups) {
+        for (const k of keys) {
+            if (evaluateCondition(taowuMeta[k], properties)) allKeys.push(k);
+        }
+    }
+
+    // 遍历所有 ui-prop 元素，更新 dump
+    const propElements = content.querySelectorAll('ui-prop[type="dump"]');
+    let keyIdx = 0;
+    for (let i = 0; i < propElements.length; i++) {
+        const el = propElements[i] as any;
+        if (keyIdx < allKeys.length) {
+            const propKey = allKeys[keyIdx];
+            const propDump = properties.get(propKey);
+            if (propDump) {
+                const meta = taowuMeta[propKey];
+                const dumpCopy = Object.assign({}, propDump);
+                if (meta?.labelText) dumpCopy.displayName = meta.labelText;
+                if (meta?.readOnly) dumpCopy.readonly = true;
+                if (meta?.range) { dumpCopy.slide = true; dumpCopy.min = meta.range.min; dumpCopy.max = meta.range.max; }
+                if (meta?.textarea) dumpCopy.multiline = true;
+                try { el.dump = dumpCopy; } catch (e) {}
+            }
+        }
+        keyIdx++;
     }
 }
 
@@ -512,6 +657,7 @@ export function ready(this: TaoWuPanelThis) {
 
 export function close(this: TaoWuPanelThis) {
     this.taowuMetadata = undefined;
+    this.elementMetadata = undefined;
     this.metadataRequested = false;
     this.dump = null;
     this.nodeUuid = '';
