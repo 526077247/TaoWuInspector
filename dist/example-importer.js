@@ -183,6 +183,20 @@ export function TableList() {
         TaoWuRegistry.register(getClassName(target), propertyKey, { tableList: true });
     };
 }
+
+/** 属性值变化时回调 (类似 Odin OnValueChanged) */
+export function OnValueChanged(methodName: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { onValueChanged: methodName });
+    };
+}
+
+/** 集合变更时回调 (类似 Odin OnCollectionChanged，数组增删时触发) */
+export function OnCollectionChanged(methodName: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { onCollectionChanged: methodName });
+    };
+}
 `
     }
 ];
@@ -261,7 +275,9 @@ import {
     InfoBox,
     PropertyOrder,
     TextArea,
-    TableList
+    TableList,
+    OnValueChanged,
+    OnCollectionChanged
 } from '../Runtime/TaoWuDecorators';
 
 @ccclass('TaoWuDemoComponent')
@@ -273,7 +289,29 @@ export class TaoWuDemoComponent extends Component {
 
     @property
     @PropertyRange(0, 100)
+    @OnValueChanged('onHealthChanged')
     health: number = 100;
+
+    @property
+    @FoldoutGroup('回调测试')
+    @OnValueChanged('onMoveSpeedChanged')
+    testSpeed: number = 10;
+
+    @property([CCInteger])
+    @FoldoutGroup('回调测试')
+    @OnCollectionChanged('onListChanged')
+    testList: number[] = [1, 2, 3];
+
+    // ─── 回调方法 ───
+    onHealthChanged(): void {
+        console.log('[TaoWuDemo] health changed to:', this.health);
+    }
+    onMoveSpeedChanged(): void {
+        console.log('[TaoWuDemo] testSpeed changed to:', this.testSpeed);
+    }
+    onListChanged(): void {
+        console.log('[TaoWuDemo] testList changed:', this.testList);
+    }
 
     // ─── 折叠分组: 角色设置 ───
     @property

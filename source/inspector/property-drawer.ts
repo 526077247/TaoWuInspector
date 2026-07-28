@@ -60,6 +60,16 @@ function toDisplayName(str: string): string {
         .trim();
 }
 
+/** 触发 OnValueChanged / OnCollectionChanged 回调 */
+async function triggerCallbacks(compUuid: string, compIndex: number, propName: string): Promise<void> {
+    try {
+        await Editor.Message.request('scene', 'execute-scene-script', {
+            name: 'taowu-inspector', method: 'triggerValueChanged',
+            args: [compUuid, compIndex, propName]
+        });
+    } catch (e) {}
+}
+
 /** 创建单个属性的 UI 元素 */
 export function createPropertyElement(
     propName: string,
@@ -389,6 +399,7 @@ function createListElement(
                     propDump.value = [...items];
                     updateHeader();
                     renderItems();
+                    if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                 });
                 wrapper.appendChild(delBtn);
                 const itemBox = document.createElement('ui-section');
@@ -438,6 +449,7 @@ function createListElement(
                             items[i] = { ...unwrapped };
                             const setDump: any = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
                             await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
+                            if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                         });
                     } else {
                         subInput.addEventListener('change', async () => {
@@ -447,6 +459,7 @@ function createListElement(
                             items[i] = { ...unwrapped };
                             const setDump: any = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
                             await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
+                            if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                         });
                     }
                     subRow.appendChild(subField);
@@ -492,6 +505,7 @@ function createListElement(
                         items[i] = newDump.value;
                         await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: newDump });
                         propDump.value[i] = newDump.value;
+                        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                     });
                 } else {
                     itemInput.addEventListener('change', async () => {
@@ -500,6 +514,7 @@ function createListElement(
                         items[i] = newVal;
                         await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: { type: _itemType, value: newVal } });
                         propDump.value[i] = newVal;
+                        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                     });
                 }
                 itemRow.appendChild(itemContent);
@@ -515,6 +530,7 @@ function createListElement(
                     propDump.value = [...items];
                     updateHeader();
                     renderItems();
+                    if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                 });
                 itemRow.appendChild(delBtn);
                 itemsContainer.appendChild(itemRow);
@@ -544,6 +560,7 @@ function createListElement(
         items.push(defaultVal);
         updateHeader();
         renderItems();
+        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
     });
     content.appendChild(addBtn);
 
@@ -736,6 +753,7 @@ function createTableListElement(
                         items[i] = newDump.value;
                         await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: newDump });
                         propDump.value[i] = newDump.value;
+                        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                     });
                     tableRow.appendChild(cell);
                     const tblDelBtn = document.createElement('span');
@@ -848,6 +866,7 @@ function createTableListElement(
                             dump: { type: itemType, value: newVal },
                         });
                         propDump.value[i] = newVal;
+                        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                     });
                 } else {
                     // 普通对象: 渲染每个子属性
@@ -939,6 +958,7 @@ function createTableListElement(
                         dump: { type: itemDump.type, value: newVal },
                     });
                     propDump.value[i] = newVal;
+                    if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                 });
                 tableRow.appendChild(cell);
                 const tblDelBtn = createDelButton('×');
@@ -951,6 +971,7 @@ function createTableListElement(
                     propDump.value = [...items];
                     updateHeader();
                     renderItems();
+                    if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                 });
                     tableRow.appendChild(tblDelBtn);
                     itemsContainer.appendChild(tableRow);
@@ -1046,6 +1067,7 @@ function createTableListElement(
         }
         updateHeader();
         renderItems();
+        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
     });
     content.appendChild(addBtn);
 
@@ -1168,6 +1190,7 @@ function createDictTableElement(
                             uuid: compUuid, path: basePath + '.' + k,
                             dump: setDump
                         });
+                        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                     });
                 } else {
                     vi.addEventListener('change', async () => {
@@ -1179,6 +1202,7 @@ function createDictTableElement(
                             uuid: compUuid, path: basePath + '.' + k,
                             dump: setDump
                         });
+                        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
                     });
                 }
             })(key, valInput, valDump);
@@ -1364,6 +1388,10 @@ function setupChangeListener(
                 if (contentEl && (contentEl as any).__taowuRerender) {
                     (contentEl as any).__taowuRerender(propName, newVal);
                 }
+                // 触发 OnValueChanged / OnCollectionChanged 回调
+                if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged) {
+                    await triggerCallbacks(compUuid, compIndex, propName);
+                }
             }
         };
         input.addEventListener('change-dump', handleChange);
@@ -1407,12 +1435,8 @@ function setupChangeListener(
             lastWrittenValue = newValue;
         }
 
-        if (taowuMeta?.onValueChanged) {
-            await Editor.Message.request('scene', 'execute-scene-script', {
-                name: 'taowu-inspector',
-                method: 'onValueChanged',
-                args: [compUuid, compIndex, propName, taowuMeta.onValueChanged]
-            });
+        if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged) {
+            await triggerCallbacks(compUuid, compIndex, propName);
         }
     };
 

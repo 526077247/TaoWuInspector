@@ -8,77 +8,87 @@ exports.methods = void 0;
 exports.methods = {
     getMetadata(componentType) {
         const registry = globalThis.__TAOWU_REGISTRY__;
-        if (!registry) {
-            return null;
-        }
+        if (!registry) { return null; }
         let meta = registry.getMetadata(componentType);
-        if (meta)
-            return meta;
+        if (meta) return meta;
         const cc = globalThis.cc;
         if (cc && cc.js) {
             const cls = cc.js.getClassByName(componentType);
             if (cls) {
-                const actualName = cls.name;
-                meta = registry.getMetadata(actualName);
-                if (meta)
-                    return meta;
+                meta = registry.getMetadata(cls.name);
+                if (meta) return meta;
             }
         }
         return null;
     },
     hasMetadata(componentType) {
         const registry = globalThis.__TAOWU_REGISTRY__;
-        if (!registry)
-            return false;
-        if (registry.hasMetadata(componentType))
-            return true;
+        if (!registry) return false;
+        if (registry.hasMetadata(componentType)) return true;
         const cc = globalThis.cc;
         if (cc && cc.js) {
             const cls = cc.js.getClassByName(componentType);
-            if (cls && registry.hasMetadata(cls.name))
-                return true;
+            if (cls && registry.hasMetadata(cls.name)) return true;
         }
         return false;
     },
-    /**
-     * 设置字典属性 (绕过 set-property 的 dump 限制)
-     * @param uuid 组件 UUID
-     * @param path 属性路径 (如 __comps__.0.resistanceMap)
-     * @param value 完整的字典值对象
-     */
     async setDictValue(uuid, path, value) {
         const cc = globalThis.cc;
-        if (!cc || !cc.director)
-            return false;
+        if (!cc || !cc.director) return false;
         const scene = cc.director.getScene();
-        if (!scene)
-            return false;
-        // 通过 uuid 查找节点
-        const node = cc.director.getScene().getChildByName(uuid) || findNodeByUuid(scene, uuid);
-        if (!node) {
-            // uuid 可能是组件 uuid, 尝试遍历
-            const comp = findComponentByUuid(scene, uuid);
-            if (comp) {
-                setPropertyByPath(comp, path, value);
-                return true;
-            }
-            return false;
-        }
-        // 从 path 解析组件索引和属性名
+        if (!scene) return false;
+        const node = findNodeByUuid(scene, uuid);
+        let comp = null;
+        let propName = null;
         const match = path.match(/__comps__\.(\d+)\.(.+)/);
         if (match) {
             const compIndex = parseInt(match[1]);
-            const propName = match[2];
-            const comps = node.components;
-            if (comps && comps[compIndex]) {
-                const comp = comps[compIndex];
-                setNestedProperty(comp, propName, value);
-                return true;
+            propName = match[2];
+            if (node) {
+                const comps = node.components;
+                if (comps && comps[compIndex]) {
+                    comp = comps[compIndex];
+                    setNestedProperty(comp, propName, value);
+                }
             }
         }
+        if (!comp) {
+            comp = findComponentByUuid(scene, uuid);
+            if (comp && match) {
+                setNestedProperty(comp, propName, value);
+            }
+        }
+        if (comp && propName) {
+            triggerCallbacks(comp, propName);
+            return true;
+        }
         return false;
+    },
+    async triggerValueChanged(uuid, compIndex, propName) {
+        const cc = globalThis.cc;
+        if (!cc || !cc.director) return;
+        const scene = cc.director.getScene();
+        if (!scene) return;
+        const node = findNodeByUuid(scene, uuid);
+        if (!node) return;
+        const comp = node.components && node.components[compIndex];
+        if (comp) triggerCallbacks(comp, propName);
     }
 };
+function triggerCallbacks(comp, propName) {
+    const registry = globalThis.__TAOWU_REGISTRY__;
+    if (!registry) return;
+    const className = comp.constructor ? comp.constructor.name : '';
+    const meta = registry.getMetadata(className);
+    if (!meta || !meta[propName]) return;
+    const propMeta = meta[propName];
+    if (propMeta.onValueChanged && typeof comp[propMeta.onValueChanged] === 'function') {
+        try { comp[propMeta.onValueChanged](); } catch (e) { console.error('[TaoWuInspector] onValueChanged error:', e); }
+    }
+    if (propMeta.onCollectionChanged && typeof comp[propMeta.onCollectionChanged] === 'function') {
+        try { comp[propMeta.onCollectionChanged](); } catch (e) { console.error('[TaoWuInspector] onCollectionChanged error:', e); }
+    }
+}
 /** 通过 UUID 递归查找节点 */
 function findNodeByUuid(root, uuid) {
     if (root.uuid === uuid)

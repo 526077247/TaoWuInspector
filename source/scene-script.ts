@@ -49,32 +49,63 @@ export const methods = {
         if (!cc || !cc.director) return false;
         const scene = cc.director.getScene();
         if (!scene) return false;
-        // 通过 uuid 查找节点
-        const node = findNodeByUuid(scene, uuid);
-        if (node) {
-            const match = path.match(/__comps__\.(\d+)\.(.+)/);
-            if (match) {
-                const compIndex = parseInt(match[1]);
-                const propName = match[2];
+        let comp: any = null;
+        let propName: string | null = null;
+        const match = path.match(/__comps__\.(\d+)\.(.+)/);
+        if (match) {
+            const compIndex = parseInt(match[1]);
+            propName = match[2];
+            const node = findNodeByUuid(scene, uuid);
+            if (node) {
                 const comps = node.components;
                 if (comps && comps[compIndex]) {
-                    setNestedProperty(comps[compIndex], propName, value);
-                    return true;
+                    comp = comps[compIndex];
+                    setNestedProperty(comp, propName, value);
                 }
             }
         }
-        // uuid 可能是组件 uuid
-        const comp = findComponentByUuid(scene, uuid);
-        if (comp) {
-            const match = path.match(/__comps__\.(\d+)\.(.+)/);
-            if (match) {
+        if (!comp) {
+            comp = findComponentByUuid(scene, uuid);
+            if (comp && match) {
                 setNestedProperty(comp, match[2], value);
-                return true;
             }
         }
+        if (comp && propName) {
+            triggerCallbacks(comp, propName);
+            return true;
+        }
         return false;
+    },
+
+    /**
+     * 触发属性值变化回调
+     */
+    async triggerValueChanged(uuid: string, compIndex: number, propName: string): Promise<void> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.director) return;
+        const scene = cc.director.getScene();
+        if (!scene) return;
+        const node = findNodeByUuid(scene, uuid);
+        if (!node) return;
+        const comp = node.components && node.components[compIndex];
+        if (comp) triggerCallbacks(comp, propName);
     }
 };
+
+function triggerCallbacks(comp: any, propName: string): void {
+    const registry: ITaoWuRegistry | undefined = (globalThis as any).__TAOWU_REGISTRY__;
+    if (!registry) return;
+    const className = comp.constructor ? comp.constructor.name : '';
+    const meta = registry.getMetadata(className);
+    if (!meta || !meta[propName]) return;
+    const propMeta = meta[propName];
+    if (propMeta.onValueChanged && typeof comp[propMeta.onValueChanged] === 'function') {
+        try { comp[propMeta.onValueChanged](); } catch (e) { console.error('[TaoWuInspector] onValueChanged error:', e); }
+    }
+    if (propMeta.onCollectionChanged && typeof comp[propMeta.onCollectionChanged] === 'function') {
+        try { comp[propMeta.onCollectionChanged](); } catch (e) { console.error('[TaoWuInspector] onCollectionChanged error:', e); }
+    }
+}
 
 function findNodeByUuid(root: any, uuid: string): any {
     if (root.uuid === uuid) return root;

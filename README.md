@@ -138,6 +138,34 @@ export class MyComponent extends Component {
 | `@TextArea()` | 无 | 将字符串属性渲染为多行文本框 |
 | `@PropertyOrder(order)` | `order: number` — 排序值 | 控制属性渲染顺序（值大的在后） |
 
+### 回调类
+
+| 装饰器 | 参数 | 说明 |
+|--------|------|------|
+| `@OnValueChanged(method)` | `method: string` — 方法名 | 属性值变化时调用组件上的指定方法 |
+| `@OnCollectionChanged(method)` | `method: string` — 方法名 | 数组/字典增删元素时调用组件上的指定方法 |
+
+**使用示例：**
+
+```typescript
+@property
+@PropertyRange(0, 100)
+@OnValueChanged('onHealthChanged')
+health: number = 100;
+
+@property([CCInteger])
+@OnCollectionChanged('onListChanged')
+itemList: number[] = [1, 2, 3];
+
+// 组件中定义回调方法
+onHealthChanged(): void {
+    console.log('health changed to:', this.health);
+}
+onListChanged(): void {
+    console.log('itemList changed:', this.itemList);
+}
+```
+
 ### 列表类
 
 | 装饰器 | 参数 | 说明 |
