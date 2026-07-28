@@ -177,31 +177,50 @@ const CSS_STYLE = `
 .taowu-collection-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     margin: 1px 0;
 }
 .taowu-collection-index {
-    flex: 0 0 50px;
+    flex: 0 0 20px;
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.taowu-collection-label {
+    flex: 0 0 auto;
+    min-width: 50px;
+    max-width: 120px;
     font-size: 11px;
     color: #888;
     text-align: right;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    padding-right: 4px;
 }
 .taowu-collection-field {
     flex: 1;
     min-width: 0;
+    flex-shrink: 1;
 }
 .taowu-collection-field > * {
     width: 100%;
 }
+.taowu-collection-field > ui-prop::part(label) {
+    display: none;
+}
 /* TableList 表格行风格 */
+.taowu-table-rows {
+    display: grid;
+}
 .taowu-table-row {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 4px;
+    gap: 0;
+    padding: 0;
     border-bottom: 1px solid #333;
 }
 .taowu-table-row:last-child { border-bottom: none; }
@@ -215,6 +234,21 @@ const CSS_STYLE = `
 .taowu-table-header .taowu-table-cell {
     text-align: center;
     padding: 2px 4px;
+    white-space: nowrap;
+    position: relative;
+}
+.taowu-col-resizer {
+    position: absolute;
+    top: 0;
+    right: -2px;
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 5;
+}
+.taowu-col-resizer:hover {
+    background: #40a9ff;
 }
 .taowu-table-index {
     flex: 0 0 24px;
@@ -223,16 +257,31 @@ const CSS_STYLE = `
     text-align: center;
 }
 .taowu-table-cell {
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 0;
+    min-width: 40px;
+    overflow: hidden;
 }
-.taowu-table-cell > * { width: 100%; }
+.taowu-table-cell > * { width: 100%; max-width: 100%; }
 /* TableList 内部元素 Box (Vec3/Color 等仍用折叠盒子) */
 .taowu-collection-item-box {
     margin: 2px 0;
     border: 1px solid #3a3a3a;
     border-radius: 3px;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
+}
+.taowu-collection-item-wrapper {
+    position: relative;
+    margin: 2px 0;
+}
+.taowu-collection-item-wrapper > .taowu-list-btn-del {
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    z-index: 10;
+}
+.taowu-collection-item-wrapper > .taowu-collection-item-box {
+    width: 100%;
 }
 .taowu-collection-item-header {
     display: flex;
@@ -274,6 +323,7 @@ const CSS_STYLE = `
 .taowu-list-btn-del {
     color: #c55;
     min-width: 20px;
+    flex-shrink: 0;
     text-align: center;
     padding: 2px 6px;
 }

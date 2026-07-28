@@ -17,6 +17,40 @@ function unwrapVecValue(val: any, keys: string[]): any {
     return result;
 }
 
+/** 为表头添加拖拽调整列宽手柄 */
+function syncColumnWidths(headerRow: HTMLElement, container: HTMLElement): void {
+    const headerCells = Array.from(headerRow.querySelectorAll('.taowu-table-cell'));
+    headerCells.forEach((cell, idx) => {
+        if (cell.querySelector('.taowu-col-resizer')) return;
+        const resizer = document.createElement('div');
+        resizer.className = 'taowu-col-resizer';
+        cell.appendChild(resizer);
+        let startX = 0;
+        let startW = 0;
+        resizer.addEventListener('mousedown', (e: MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startX = e.clientX;
+            startW = (cell as HTMLElement).getBoundingClientRect().width;
+            const onMove = (ev: MouseEvent) => {
+                const newW = Math.max(40, startW + ev.clientX - startX);
+                (cell as HTMLElement).style.flex = '0 0 ' + newW + 'px';
+                // 同步到数据行
+                const dataRows = container.querySelectorAll('.taowu-table-row:not(.taowu-table-header)');
+                dataRows.forEach(row => {
+                    const cells = row.querySelectorAll('.taowu-table-cell');
+                    if (cells[idx]) (cells[idx] as HTMLElement).style.flex = '0 0 ' + newW + 'px';
+                });
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove as EventListener);
+            document.addEventListener('mouseup', onUp);
+        });
+    });
+}
 /** camelCase 转为 Title Case (如 configMap → Config Map) */
 function toDisplayName(str: string): string {
     return str
@@ -322,54 +356,61 @@ function createListElement(
         itemsContainer.innerHTML = '';
         for (let i = 0; i < items.length; i++) {
             const itemValue = items[i];
-            const isObj = typeof itemValue === 'object' && itemValue !== null && !Array.isArray(itemValue);
-
+            // 检测是否为 Cocos 内置类型 (Vec3/Color/Size 等)，这些应该走简单行渲染
+            const _isCocosType = (() => {
+                if (typeof itemValue !== 'object' || itemValue === null || Array.isArray(itemValue)) return false;
+                // IProperty 包装: {value: {x:1,y:1,z:1}, type: "cc.Vec3"}
+                if (itemValue.type !== undefined && typeof itemValue.value === 'object' && itemValue.value !== null) {
+                    const t = itemValue.type;
+                    return t === 'cc.Vec3' || t === 'cc.Vec2' || t === 'cc.Vec4' || t === 'cc.Color' || t === 'cc.Size' || t === 'cc.Quat';
+                }
+                // 解包后: {x:1, y:1, z:1}
+                const keys = Object.keys(itemValue);
+                const hasXYZ = keys.includes('x') && keys.includes('y');
+                const hasRGB = keys.includes('r') && keys.includes('g') && keys.includes('b');
+                const hasWH = keys.includes('width') && keys.includes('height');
+                return hasXYZ || hasRGB || hasWH;
+            })();
+            const isObj = typeof itemValue === 'object' && itemValue !== null && !Array.isArray(itemValue) && !_isCocosType;
             if (isObj) {
-                // 对象元素: 用 Element Box 渲染 (与 TableList 一致)
-                const itemBox = document.createElement('div');
-                itemBox.className = 'taowu-collection-item-box';
-
-                const itemHeader = document.createElement('div');
-                itemHeader.className = 'taowu-collection-item-header';
-                itemHeader.textContent = `Element ${i}`;
-
+                // 对象元素: 删除按钮 + 可折叠 ui-section (同级)
+                const wrapper = document.createElement('div');
+                wrapper.className = 'taowu-collection-item-wrapper';
+                const _elemTypeName = propDump.elementTypeData?.type;
+                const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
                 const delBtn = createDelButton('×');
-                delBtn.addEventListener('click', async () => {
+                delBtn.addEventListener('click', async (ev: Event) => {
+                    ev.stopPropagation();
                     items.splice(i, 1);
-                    await Editor.Message.request('scene', 'set-property', {
-                        uuid: compUuid, path: `${basePath}.length`,
-                        dump: { value: items.length },
-                    });
+                    await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
                     propDump.value = [...items];
                     updateHeader();
                     renderItems();
                 });
-                itemHeader.appendChild(delBtn);
-                itemBox.appendChild(itemHeader);
-
+                wrapper.appendChild(delBtn);
+                const itemBox = document.createElement('ui-section');
+                itemBox.className = 'taowu-collection-item-box';
+                itemBox.setAttribute('header', `${_elemTypeName || 'Element'} ${i}`);
                 const itemContent = document.createElement('div');
                 itemContent.className = 'taowu-collection-item-content';
-
-                // 解包 IProperty
+                const stop = (e: Event) => e.stopPropagation();
+                itemContent.addEventListener('click', stop);
+                itemContent.addEventListener('mousedown', stop);
+                itemContent.addEventListener('pointerdown', stop);
+                itemContent.addEventListener('change', stop);
+                itemContent.addEventListener('confirm', stop);
                 const unwrapped = (itemValue.value !== undefined && itemValue.type !== undefined && typeof itemValue.value === 'object')
                     ? itemValue.value : itemValue;
                 const keys = Object.keys(unwrapped);
-                const _elemTypeName = propDump.elementTypeData?.type;
-                const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
-
                 for (const subKey of keys) {
                     const subRow = document.createElement('div');
                     subRow.className = 'taowu-collection-row';
-
                     const subLabel = document.createElement('span');
-                    subLabel.className = 'taowu-collection-index';
+                    subLabel.className = 'taowu-collection-label';
                     subLabel.textContent = _elemMeta[subKey]?.labelText || subKey;
                     subRow.appendChild(subLabel);
-
                     const subField = document.createElement('div');
                     subField.className = 'taowu-collection-field';
-
-                    // 解包子属性 IProperty: {value: "attack", type: "String", path: "..."} → "attack"
                     let subVal = unwrapped[subKey];
                     let subType = 'String';
                     let subPath = `${basePath}.${i}.${subKey}`;
@@ -378,18 +419,13 @@ function createListElement(
                         subType = subVal.type;
                         subVal = subVal.value;
                         rawSubDump = unwrapped[subKey];
-                        // 使用 dump 中的原始 path，不做格式转换
-                        if (rawSubDump && rawSubDump.path) {
-                            subPath = rawSubDump.path;
-                        }
+                        if (rawSubDump && rawSubDump.path) { subPath = rawSubDump.path; }
                     } else {
-                        subType = typeof subVal === 'number' ? 'Number'
-                            : typeof subVal === 'boolean' ? 'Boolean' : 'String';
+                        subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
                     }
                     const subDump = { value: subVal, type: subType };
                     const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, true);
                     subField.appendChild(subInput);
-
                     const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
                     if (isSubInput) {
                         subInput.addEventListener('confirm', async (e: Event) => {
@@ -398,10 +434,7 @@ function createListElement(
                             unwrapped[subKey] = newVal;
                             items[i] = { ...unwrapped };
                             const setDump: any = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                            await Editor.Message.request('scene', 'set-property', {
-                                uuid: compUuid, path: subPath,
-                                dump: setDump,
-                            });
+                            await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
                         });
                     } else {
                         subInput.addEventListener('change', async () => {
@@ -410,64 +443,77 @@ function createListElement(
                             unwrapped[subKey] = newVal;
                             items[i] = { ...unwrapped };
                             const setDump: any = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                            await Editor.Message.request('scene', 'set-property', {
-                                uuid: compUuid, path: subPath,
-                                dump: setDump,
-                            });
+                            await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
                         });
                     }
-
                     subRow.appendChild(subField);
                     itemContent.appendChild(subRow);
                 }
-
                 itemBox.appendChild(itemContent);
-                itemsContainer.appendChild(itemBox);
+                wrapper.appendChild(itemBox);
+                itemsContainer.appendChild(wrapper);
             } else {
-                // 简单类型元素: 单行渲染
+                // 简单类型 / Cocos 类型元素: 序号 + 内容 + 删除 (单行)
                 const itemRow = document.createElement('div');
-                itemRow.className = 'taowu-collection-row';
-
+                itemRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin:1px 0;width:100%;';
                 const indexLabel = document.createElement('span');
-                indexLabel.className = 'taowu-collection-index';
+                indexLabel.style.cssText = 'flex:0 0 20px;font-size:11px;color:#888;text-align:center;';
                 indexLabel.textContent = String(i);
                 itemRow.appendChild(indexLabel);
-
                 const itemContent = document.createElement('div');
-                itemContent.className = 'taowu-collection-field';
-
-                const itemType = elementTypeData.type || (typeof items[i] === 'number' ? 'Number' : 'String');
-                const itemDump = { value: items[i], type: itemType };
-                const itemInput = createInputElement(itemDump, undefined, compUuid, compIndex, propName, isRendering, true);
+                itemContent.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;';
+                const _useRaw = !_isCocosType;
+                let itemDump: any, itemPath: string;
+                if (_isCocosType) {
+                    // Cocos 类型: 使用原始 rawItems[i] 保留子属性 path，补上 type 和 displayName
+                    const rawItem = rawItems[i];
+                    itemDump = Object.assign({}, rawItem, { type: elementTypeData.type || 'cc.Vec3', displayName: '', name: '' });
+                    itemPath = (rawItem && rawItem.path) ? rawItem.path : `${basePath}.${i}`;
+                } else {
+                    const itemType = elementTypeData.type || (typeof items[i] === 'number' ? 'Number' : 'String');
+                    itemDump = { value: items[i], type: itemType };
+                    itemPath = `${basePath}.${i}`;
+                }
+                const itemInput = createInputElement(itemDump, undefined, compUuid, compIndex, propName, isRendering, _useRaw);
                 itemContent.appendChild(itemInput);
-
-                const itemPath = `${basePath}.${i}`;
-                itemInput.addEventListener('change', async () => {
-                    if (isRendering && isRendering()) return;
-                    const newVal = getInputValue(itemInput, itemDump);
-                    items[i] = newVal;
-                    await Editor.Message.request('scene', 'set-property', {
-                        uuid: compUuid, path: itemPath,
-                        dump: { type: itemType, value: newVal },
+                const _itemType = itemDump.type;
+                if (itemInput.tagName.toLowerCase() === 'ui-prop') {
+                    requestAnimationFrame(() => {
+                        try { (itemInput as any).dump = itemDump; } catch (e) {}
+                        try { (itemInput as any).render(itemDump); } catch (e) {}
                     });
-                    propDump.value[i] = newVal;
-                });
-
+                    itemInput.addEventListener('change-dump', async () => {
+                        if (isRendering && isRendering()) return;
+                        const newDump = (itemInput as any).dump;
+                        if (!newDump) return;
+                        items[i] = newDump.value;
+                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: newDump });
+                        propDump.value[i] = newDump.value;
+                    });
+                } else {
+                    itemInput.addEventListener('change', async () => {
+                        if (isRendering && isRendering()) return;
+                        const newVal = getInputValue(itemInput, itemDump);
+                        items[i] = newVal;
+                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: { type: _itemType, value: newVal } });
+                        propDump.value[i] = newVal;
+                    });
+                }
                 itemRow.appendChild(itemContent);
-
-                const delBtn = createDelButton('×');
+                // 删除按钮: 固定宽度，不被挤压
+                const delBtn = document.createElement('span');
+                delBtn.textContent = '×';
+                delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;';
+                delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f77'; });
+                delBtn.addEventListener('mouseleave', () => { delBtn.style.color = '#c55'; });
                 delBtn.addEventListener('click', async () => {
                     items.splice(i, 1);
-                    await Editor.Message.request('scene', 'set-property', {
-                        uuid: compUuid, path: `${basePath}.length`,
-                        dump: { value: items.length },
-                    });
+                    await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
                     propDump.value = [...items];
                     updateHeader();
                     renderItems();
                 });
                 itemRow.appendChild(delBtn);
-
                 itemsContainer.appendChild(itemRow);
             }
         }
@@ -658,6 +704,61 @@ function createTableListElement(
                     itemsContainer.appendChild(tableRow);
                     continue;
                 }
+                // Cocos 类型 (Vec3/Color/Size 等): 表格行风格 # - ui-prop - ×
+                if (_isCocos) {
+                    const tableRow = document.createElement('div');
+                    tableRow.className = 'taowu-table-row';
+                    const indexSpan = document.createElement('span');
+                    indexSpan.className = 'taowu-table-index';
+                    indexSpan.textContent = String(i);
+                    tableRow.appendChild(indexSpan);
+                    const cell = document.createElement('div');
+                    cell.className = 'taowu-table-cell';
+                    // 使用原始 rawItems[i] 保留子属性 path
+                    const rawItem = rawItems[i];
+                    const itemDump: any = Object.assign({}, rawItem, { type: propDump.elementTypeData?.type || 'cc.Vec3', displayName: '', name: '' });
+                    const itemPath = (rawItem && rawItem.path) ? rawItem.path : `${basePath}.${i}`;
+                    const prop = document.createElement('ui-prop');
+                    prop.setAttribute('type', 'dump');
+                    try { (prop as any).dump = itemDump; } catch (e) {}
+                    cell.appendChild(prop);
+                    requestAnimationFrame(() => {
+                        try { (prop as any).dump = itemDump; } catch (e) {}
+                        try { (prop as any).render(itemDump); } catch (e) {}
+                    });
+                    prop.addEventListener('change-dump', async () => {
+                        if (isRendering && isRendering()) return;
+                        const newDump = (prop as any).dump;
+                        if (!newDump) return;
+                        items[i] = newDump.value;
+                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: newDump });
+                        propDump.value[i] = newDump.value;
+                    });
+                    tableRow.appendChild(cell);
+                    const tblDelBtn = document.createElement('span');
+                    tblDelBtn.textContent = '×';
+                    tblDelBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;overflow:visible;';
+                    tblDelBtn.addEventListener('mouseenter', () => { tblDelBtn.style.color = '#f77'; });
+                    tblDelBtn.addEventListener('mouseleave', () => { tblDelBtn.style.color = '#c55'; });
+                    tblDelBtn.addEventListener('click', async () => {
+                        items.splice(i, 1);
+                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
+                        for (let j = 0; j < items.length; j++) {
+                            const v = items[j];
+                            if (typeof v === 'object' && v !== null) {
+                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.${j}`, dump: { type: propDump.elementTypeData?.type || 'Object', value: JSON.parse(JSON.stringify(v)) } });
+                            } else {
+                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.${j}`, dump: { type: typeof v === 'number' ? 'Number' : 'String', value: v } });
+                            }
+                        }
+                        propDump.value = [...items];
+                        updateHeader();
+                        renderItems();
+                    });
+                    tableRow.appendChild(tblDelBtn);
+                    itemsContainer.appendChild(tableRow);
+                    continue;
+                }
             }
             const itemBox = document.createElement('div');
             itemBox.className = 'taowu-collection-item-box';
@@ -752,7 +853,7 @@ function createTableListElement(
                         subRow.className = 'taowu-collection-row';
 
                         const subLabel = document.createElement('span');
-                        subLabel.className = 'taowu-collection-index';
+                        subLabel.className = 'taowu-collection-label';
                         subLabel.textContent = _elemMeta[subKey]?.labelText || subKey;
                         subRow.appendChild(subLabel);
 
@@ -810,14 +911,21 @@ function createTableListElement(
                     }
                 }
             } else {
-                // 简单类型元素
+                // 简单类型 / Cocos 类型元素: 表格行风格 # - 内容 - ×
+                const tableRow = document.createElement('div');
+                tableRow.className = 'taowu-table-row';
+                const indexSpan = document.createElement('span');
+                indexSpan.className = 'taowu-table-index';
+                indexSpan.textContent = String(i);
+                tableRow.appendChild(indexSpan);
+                const cell = document.createElement('div');
+                cell.className = 'taowu-table-cell';
                 const itemDump = {
                     value: itemValue,
                     type: typeof itemValue === 'number' ? 'Number' : 'String',
                 };
                 const itemInput = createInputElement(itemDump, undefined, compUuid, compIndex, propName, isRendering, true);
-                itemInput.style.width = '100%';
-                itemContent.appendChild(itemInput);
+                cell.appendChild(itemInput);
 
                 itemInput.addEventListener('change', async () => {
                     if (isRendering && isRendering()) return;
@@ -829,11 +937,28 @@ function createTableListElement(
                     });
                     propDump.value[i] = newVal;
                 });
-            }
-
-            itemBox.appendChild(itemContent);
-            itemsContainer.appendChild(itemBox);
+                tableRow.appendChild(cell);
+                const tblDelBtn = createDelButton('×');
+                tblDelBtn.addEventListener('click', async () => {
+                    items.splice(i, 1);
+                    await Editor.Message.request('scene', 'set-property', {
+                        uuid: compUuid, path: `${basePath}.length`,
+                        dump: { value: items.length },
+                    });
+                    propDump.value = [...items];
+                    updateHeader();
+                    renderItems();
+                });
+                    tableRow.appendChild(tblDelBtn);
+                    itemsContainer.appendChild(tableRow);
+                    continue;
+                }
+                itemBox.appendChild(itemContent);
+                itemsContainer.appendChild(itemBox);
         }
+        // 数据行渲染完成后，同步表头列宽
+        const headerEl = itemsContainer.querySelector('.taowu-table-header');
+        if (headerEl) syncColumnWidths(headerEl as HTMLElement, itemsContainer);
     }
 
     function updateHeader(): void {
@@ -950,7 +1075,7 @@ function createMapElement(
         row.className = 'taowu-collection-row';
 
         const keyLabel = document.createElement('span');
-        keyLabel.className = 'taowu-collection-index';
+        keyLabel.className = 'taowu-collection-label';
         keyLabel.textContent = _elemMeta[key]?.labelText || key;
         row.appendChild(keyLabel);
 
