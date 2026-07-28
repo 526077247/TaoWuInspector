@@ -147,6 +147,9 @@ function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, 
     // Object/Map — 非 cc.* 类型的对象且有实际属性
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
         && !type.startsWith('cc.') && Object.keys(value).length > 0) {
+        if (taowuMeta?.tableList) {
+            return createDictTableElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta);
+        }
         return createMapElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
     // rawElement: 用于 List/TableList/Map 内部元素，不使用 ui-prop
@@ -990,6 +993,195 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
         renderItems();
     });
     content.appendChild(addBtn);
+    return container;
+}
+// ─── 字典 TableList 渲染 (Record<string, V> + @TableList) ───
+function buildCleanDict(valueObj) {
+    var result = {};
+    for (var k in valueObj) {
+        var v = valueObj[k];
+        if (v && typeof v === 'object' && v.value !== undefined && v.type !== undefined) {
+            result[k] = v.value;
+        } else {
+            result[k] = v;
+        }
+    }
+    return result;
+}
+function createDictTableElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta) {
+    var basePath = buildPath(propDump, compIndex, propName);
+    var valueObj = propDump.value || {};
+    var keys = Object.keys(valueObj);
+    var { container: container, content: content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
+    var itemsContainer = document.createElement('div');
+    itemsContainer.className = 'taowu-collection-items';
+    content.appendChild(itemsContainer);
+
+    function renderItems() {
+        itemsContainer.innerHTML = '';
+        keys = Object.keys(valueObj);
+        // 表头
+        if (keys.length > 0 || true) {
+            var headerRow = document.createElement('div');
+            headerRow.className = 'taowu-table-row taowu-table-header';
+            var hIdx = document.createElement('span');
+            hIdx.className = 'taowu-table-index'; hIdx.textContent = '#';
+            headerRow.appendChild(hIdx);
+            var hKey = document.createElement('div');
+            hKey.className = 'taowu-table-cell'; hKey.textContent = 'Key';
+            headerRow.appendChild(hKey);
+            var hVal = document.createElement('div');
+            hVal.className = 'taowu-table-cell'; hVal.textContent = 'Value';
+            headerRow.appendChild(hVal);
+            var spacer = document.createElement('span');
+            spacer.className = 'taowu-table-index'; spacer.textContent = '';
+            headerRow.appendChild(spacer);
+            itemsContainer.appendChild(headerRow);
+        }
+        // 数据行
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var val = valueObj[key];
+            // 解包 IProperty
+            var rawValDump = null;
+            if (val && typeof val === 'object' && val.value !== undefined && val.type !== undefined) {
+                rawValDump = val;
+                val = val.value;
+            }
+            var valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
+            var tableRow = document.createElement('div');
+            tableRow.className = 'taowu-table-row';
+            var indexSpan = document.createElement('span');
+            indexSpan.className = 'taowu-table-index';
+            indexSpan.textContent = String(i);
+            tableRow.appendChild(indexSpan);
+            // Key 输入
+            var keyCell = document.createElement('div');
+            keyCell.className = 'taowu-table-cell';
+            var keyInput = document.createElement('ui-input');
+            keyInput.style.width = '100%';
+            try { keyInput.value = key; } catch (e) {}
+            keyCell.appendChild(keyInput);
+            tableRow.appendChild(keyCell);
+            // Value 输入
+            var valCell = document.createElement('div');
+            valCell.className = 'taowu-table-cell';
+            var valDump = { value: val, type: valType };
+            var valInput = createInputElement(valDump, undefined, compUuid, compIndex, propName, isRendering, true);
+            valCell.appendChild(valInput);
+            tableRow.appendChild(valCell);
+            // 事件: Key 修改
+            (function(k, ki) {
+                ki.addEventListener('confirm', async function(e) {
+                    e.stopPropagation();
+                    var newKey = ki.value;
+                    if (newKey === k) return;
+                    if (valueObj[newKey] !== undefined) {
+                        console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
+                        ki.value = k;
+                        return;
+                    }
+                    valueObj[newKey] = valueObj[k];
+                    delete valueObj[k];
+                    // 通过 scene-script 直接修改组件属性 (绕过 set-property 的 dump 限制)
+                    var cleanVal = buildCleanDict(valueObj);
+                    await Editor.Message.request('scene', 'execute-scene-script', {
+                        name: 'taowu-inspector', method: 'setDictValue',
+                        args: [compUuid, basePath, cleanVal]
+                    });
+                    renderItems();
+                });
+            })(key, keyInput);
+            // 事件: Value 修改
+            (function(k, vi, vd) {
+                var isVi = vi.tagName.toLowerCase() === 'ui-input';
+                if (isVi) {
+                    vi.addEventListener('confirm', async function(e) {
+                        e.stopPropagation();
+                        var newVal = getInputValue(vi, vd);
+                        valueObj[k] = newVal;
+                        var setDump = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
+                        await Editor.Message.request('scene', 'set-property', {
+                            uuid: compUuid, path: basePath + '.' + k,
+                            dump: setDump
+                        });
+                    });
+                } else {
+                    vi.addEventListener('change', async function() {
+                        if (isRendering && isRendering()) return;
+                        var newVal = getInputValue(vi, vd);
+                        valueObj[k] = newVal;
+                        var setDump = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
+                        await Editor.Message.request('scene', 'set-property', {
+                            uuid: compUuid, path: basePath + '.' + k,
+                            dump: setDump
+                        });
+                    });
+                }
+            })(key, valInput, valDump);
+            // 删除按钮
+            var delBtn = document.createElement('span');
+            delBtn.textContent = '×';
+            delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;overflow:visible;';
+            delBtn.addEventListener('mouseenter', function() { delBtn.style.color = '#f77'; });
+            delBtn.addEventListener('mouseleave', function() { delBtn.style.color = '#c55'; });
+            (function(k) {
+                delBtn.addEventListener('click', async function() {
+                    delete valueObj[k];
+                    var cleanVal = buildCleanDict(valueObj);
+                    await Editor.Message.request('scene', 'execute-scene-script', {
+                        name: 'taowu-inspector', method: 'setDictValue',
+                        args: [compUuid, basePath, cleanVal]
+                    });
+                    renderItems();
+                });
+            })(key);
+            tableRow.appendChild(delBtn);
+            itemsContainer.appendChild(tableRow);
+        }
+        // 添加区: Key 输入 + 添加按钮
+        var addRow = document.createElement('div');
+        addRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;';
+        var addKeyInput = document.createElement('ui-input');
+        addKeyInput.setAttribute('placeholder', '输入 Key');
+        addKeyInput.style.cssText = 'flex:1;min-width:0;';
+        addRow.appendChild(addKeyInput);
+        var addBtn = document.createElement('div');
+        addBtn.className = 'taowu-list-btn taowu-list-btn-add';
+        addBtn.textContent = '+ 添加';
+        addRow.appendChild(addBtn);
+        addBtn.addEventListener('click', async function() {
+            var newKey = addKeyInput.value;
+            if (!newKey) {
+                console.error('[TaoWuInspector] 请输入 Key');
+                return;
+            }
+            if (valueObj[newKey] !== undefined) {
+                console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
+                return;
+            }
+            // 推断默认值类型
+            var firstKey = Object.keys(valueObj)[0];
+            var defaultVal = firstKey !== undefined ? (typeof valueObj[firstKey] === 'number' ? 0 : '') : 0;
+            valueObj[newKey] = defaultVal;
+                    var cleanVal = buildCleanDict(valueObj);
+                    await Editor.Message.request('scene', 'execute-scene-script', {
+                        name: 'taowu-inspector', method: 'setDictValue',
+                        args: [compUuid, basePath, cleanVal]
+                    });
+                    addKeyInput.value = '';
+                    renderItems();
+        });
+        itemsContainer.appendChild(addRow);
+        // 同步列宽
+        var headerEl = itemsContainer.querySelector('.taowu-table-header');
+        if (headerEl) syncColumnWidths(headerEl, itemsContainer);
+    }
+
+    function updateHeader() {
+        container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
+    }
+    renderItems();
     return container;
 }
 // ─── Map 渲染 (对象/字典, Box 风格) ───

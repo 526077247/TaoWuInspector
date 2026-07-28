@@ -420,6 +420,17 @@ export class TaoWuDemoComponent extends Component {
     @property({ type: MapEntry })
     @FoldoutGroup('嵌套对象')
     baseStats: MapEntry = (() => { const e = new MapEntry(); e.key = 'power'; e.value = 100; return e; })();
+
+    // ─── Map 字典测试 ───
+    @property({ type: CCInteger })
+    @TableList()
+    @FoldoutGroup('Map 字典')
+    resistanceMap: { [key: string]: number } = { fire: 20, ice: 10, thunder: 5 };
+
+    @property({ type: CCString })
+    @TableList()
+    @FoldoutGroup('Map 字典')
+    dropRateMap: { [key: string]: string } = { gold: '75%', silver: '50%', bronze: '25%' };
 }
 `
     }

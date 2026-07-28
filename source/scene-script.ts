@@ -9,21 +9,14 @@ interface ITaoWuRegistry {
 }
 
 export const methods = {
-    /**
-     * 获取指定组件类的 TaoWu 元数据
-     * @param componentType 组件类名 (ccclass 注册名)
-     * @returns 元数据对象或 null
-     */
     getMetadata(componentType: string): any {
         const registry: ITaoWuRegistry | undefined = (globalThis as any).__TAOWU_REGISTRY__;
         if (!registry) {
             return null;
         }
-        // 先直接按类名查
         let meta = registry.getMetadata(componentType);
         if (meta) return meta;
 
-        // 兼容: 通过 cc.js 查找类，取实际类名再查
         const cc = (globalThis as any).cc;
         if (cc && cc.js) {
             const cls = cc.js.getClassByName(componentType);
@@ -36,9 +29,6 @@ export const methods = {
         return null;
     },
 
-    /**
-     * 检查组件是否有 TaoWu 元数据
-     */
     hasMetadata(componentType: string): boolean {
         const registry: ITaoWuRegistry | undefined = (globalThis as any).__TAOWU_REGISTRY__;
         if (!registry) return false;
@@ -49,5 +39,69 @@ export const methods = {
             if (cls && registry.hasMetadata(cls.name)) return true;
         }
         return false;
+    },
+
+    /**
+     * 设置字典属性 (绕过 set-property 的 dump 限制)
+     */
+    async setDictValue(uuid: string, path: string, value: any): Promise<boolean> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.director) return false;
+        const scene = cc.director.getScene();
+        if (!scene) return false;
+        // 通过 uuid 查找节点
+        const node = findNodeByUuid(scene, uuid);
+        if (node) {
+            const match = path.match(/__comps__\.(\d+)\.(.+)/);
+            if (match) {
+                const compIndex = parseInt(match[1]);
+                const propName = match[2];
+                const comps = node.components;
+                if (comps && comps[compIndex]) {
+                    setNestedProperty(comps[compIndex], propName, value);
+                    return true;
+                }
+            }
+        }
+        // uuid 可能是组件 uuid
+        const comp = findComponentByUuid(scene, uuid);
+        if (comp) {
+            const match = path.match(/__comps__\.(\d+)\.(.+)/);
+            if (match) {
+                setNestedProperty(comp, match[2], value);
+                return true;
+            }
+        }
+        return false;
     }
 };
+
+function findNodeByUuid(root: any, uuid: string): any {
+    if (root.uuid === uuid) return root;
+    for (const child of root.children) {
+        const found = findNodeByUuid(child, uuid);
+        if (found) return found;
+    }
+    return null;
+}
+
+function findComponentByUuid(root: any, uuid: string): any {
+    for (const child of root.children) {
+        for (const comp of child.components) {
+            if (comp.uuid === uuid || comp.__id__ === uuid) return comp;
+        }
+        const found = findComponentByUuid(child, uuid);
+        if (found) return found;
+    }
+    return null;
+}
+
+function setNestedProperty(obj: any, path: string, value: any): void {
+    const parts = path.split('.');
+    let current = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+        current = current[parts[i]];
+        if (!current) return;
+    }
+    current[parts[parts.length - 1]] = value;
+}

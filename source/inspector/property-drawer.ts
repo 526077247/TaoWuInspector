@@ -185,6 +185,9 @@ function createInputElement(
     // Object/Map — 非 cc.* 类型的对象且有实际属性
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
         && !type.startsWith('cc.') && Object.keys(value).length > 0) {
+        if (taowuMeta?.tableList) {
+            return createDictTableElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta);
+        }
         return createMapElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
 
@@ -1046,6 +1049,201 @@ function createTableListElement(
     });
     content.appendChild(addBtn);
 
+    return container;
+}
+
+// ─── 字典 TableList 渲染 (Record<string, V> + @TableList) ───
+function buildCleanDict(valueObj: any): any {
+    const result: any = {};
+    for (const k in valueObj) {
+        const v = valueObj[k];
+        if (v && typeof v === 'object' && v.value !== undefined && v.type !== undefined) {
+            result[k] = v.value;
+        } else {
+            result[k] = v;
+        }
+    }
+    return result;
+}
+function createDictTableElement(
+    propDump: any,
+    compUuid: string,
+    compIndex: number,
+    propName: string,
+    isRendering?: () => boolean,
+    taowuMeta?: ITaoWuPropertyMeta
+): HTMLElement {
+    const basePath = buildPath(propDump, compIndex, propName);
+    let valueObj: any = propDump.value || {};
+    let keys = Object.keys(valueObj);
+    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'taowu-collection-items';
+    content.appendChild(itemsContainer);
+
+    function renderItems(): void {
+        itemsContainer.innerHTML = '';
+        keys = Object.keys(valueObj);
+        // 表头
+        {
+            const headerRow = document.createElement('div');
+            headerRow.className = 'taowu-table-row taowu-table-header';
+            const hIdx = document.createElement('span');
+            hIdx.className = 'taowu-table-index'; hIdx.textContent = '#';
+            headerRow.appendChild(hIdx);
+            const hKey = document.createElement('div');
+            hKey.className = 'taowu-table-cell'; hKey.textContent = 'Key';
+            headerRow.appendChild(hKey);
+            const hVal = document.createElement('div');
+            hVal.className = 'taowu-table-cell'; hVal.textContent = 'Value';
+            headerRow.appendChild(hVal);
+            const spacer = document.createElement('span');
+            spacer.className = 'taowu-table-index'; spacer.textContent = '';
+            headerRow.appendChild(spacer);
+            itemsContainer.appendChild(headerRow);
+        }
+        // 数据行
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            let val = valueObj[key];
+            let rawValDump: any = null;
+            if (val && typeof val === 'object' && val.value !== undefined && val.type !== undefined) {
+                rawValDump = val;
+                val = val.value;
+            }
+            const valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
+            const tableRow = document.createElement('div');
+            tableRow.className = 'taowu-table-row';
+            const indexSpan = document.createElement('span');
+            indexSpan.className = 'taowu-table-index';
+            indexSpan.textContent = String(i);
+            tableRow.appendChild(indexSpan);
+            // Key 输入
+            const keyCell = document.createElement('div');
+            keyCell.className = 'taowu-table-cell';
+            const keyInput = document.createElement('ui-input');
+            keyInput.style.width = '100%';
+            try { (keyInput as any).value = key; } catch (e) {}
+            keyCell.appendChild(keyInput);
+            tableRow.appendChild(keyCell);
+            // Value 输入
+            const valCell = document.createElement('div');
+            valCell.className = 'taowu-table-cell';
+            const valDump = { value: val, type: valType };
+            const valInput = createInputElement(valDump, undefined, compUuid, compIndex, propName, isRendering, true);
+            valCell.appendChild(valInput);
+            tableRow.appendChild(valCell);
+            // 事件: Key 修改
+            ((k: string, ki: HTMLElement) => {
+                ki.addEventListener('confirm', async (e: Event) => {
+                    e.stopPropagation();
+                    const newKey = (ki as any).value;
+                    if (newKey === k) return;
+                    if (valueObj[newKey] !== undefined) {
+                        console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
+                        (ki as any).value = k;
+                        return;
+                    }
+                    valueObj[newKey] = valueObj[k];
+                    delete valueObj[k];
+                    // 通过 scene-script 直接修改组件属性 (绕过 set-property 的 dump 限制)
+                    const cleanVal = buildCleanDict(valueObj);
+                    await Editor.Message.request('scene', 'execute-scene-script', {
+                        name: 'taowu-inspector', method: 'setDictValue',
+                        args: [compUuid, basePath, cleanVal]
+                    });
+                    renderItems();
+                });
+            })(key, keyInput);
+            // 事件: Value 修改
+            ((k: string, vi: HTMLElement, vd: any) => {
+                const isVi = vi.tagName.toLowerCase() === 'ui-input';
+                if (isVi) {
+                    vi.addEventListener('confirm', async (e: Event) => {
+                        e.stopPropagation();
+                        const newVal = getInputValue(vi, vd);
+                        valueObj[k] = newVal;
+                        const setDump: any = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
+                        await Editor.Message.request('scene', 'set-property', {
+                            uuid: compUuid, path: basePath + '.' + k,
+                            dump: setDump
+                        });
+                    });
+                } else {
+                    vi.addEventListener('change', async () => {
+                        if (isRendering && isRendering()) return;
+                        const newVal = getInputValue(vi, vd);
+                        valueObj[k] = newVal;
+                        const setDump: any = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
+                        await Editor.Message.request('scene', 'set-property', {
+                            uuid: compUuid, path: basePath + '.' + k,
+                            dump: setDump
+                        });
+                    });
+                }
+            })(key, valInput, valDump);
+            // 删除按钮
+            const delBtn = document.createElement('span');
+            delBtn.textContent = '×';
+            delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;overflow:visible;';
+            delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f77'; });
+            delBtn.addEventListener('mouseleave', () => { delBtn.style.color = '#c55'; });
+            ((k: string) => {
+                delBtn.addEventListener('click', async () => {
+                    delete valueObj[k];
+                    const cleanVal = buildCleanDict(valueObj);
+                    await Editor.Message.request('scene', 'execute-scene-script', {
+                        name: 'taowu-inspector', method: 'setDictValue',
+                        args: [compUuid, basePath, cleanVal]
+                    });
+                    renderItems();
+                });
+            })(key);
+            tableRow.appendChild(delBtn);
+            itemsContainer.appendChild(tableRow);
+        }
+        // 添加区: Key 输入 + 添加按钮
+        const addRow = document.createElement('div');
+        addRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;';
+        const addKeyInput = document.createElement('ui-input');
+        addKeyInput.setAttribute('placeholder', '输入 Key');
+        addKeyInput.style.cssText = 'flex:1;min-width:0;';
+        addRow.appendChild(addKeyInput);
+        const addBtn = document.createElement('div');
+        addBtn.className = 'taowu-list-btn taowu-list-btn-add';
+        addBtn.textContent = '+ 添加';
+        addRow.appendChild(addBtn);
+        addBtn.addEventListener('click', async () => {
+            const newKey = (addKeyInput as any).value;
+            if (!newKey) {
+                console.error('[TaoWuInspector] 请输入 Key');
+                return;
+            }
+            if (valueObj[newKey] !== undefined) {
+                console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
+                return;
+            }
+            const firstKey = Object.keys(valueObj)[0];
+            const defaultVal = firstKey !== undefined ? (typeof valueObj[firstKey] === 'number' ? 0 : '') : 0;
+            valueObj[newKey] = defaultVal;
+            const cleanVal = buildCleanDict(valueObj);
+            await Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'taowu-inspector', method: 'setDictValue',
+                args: [compUuid, basePath, cleanVal]
+            });
+            (addKeyInput as any).value = '';
+            renderItems();
+        });
+        itemsContainer.appendChild(addRow);
+        // 同步列宽
+        const headerEl = itemsContainer.querySelector('.taowu-table-header');
+        if (headerEl) syncColumnWidths(headerEl as HTMLElement, itemsContainer);
+    }
+
+    function updateHeader(): void {
+        container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
+    }
+    renderItems();
     return container;
 }
 
