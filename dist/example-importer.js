@@ -14,6 +14,8 @@ export interface ITaoWuPropertyMeta {
     horizontalGroup?: string;
     showIf?: string;
     hideIf?: string;
+    enableIf?: string;
+    disableIf?: string;
     labelText?: string;
     readOnly?: boolean;
     title?: string;
@@ -21,6 +23,8 @@ export interface ITaoWuPropertyMeta {
     infoBox?: { message: string; type: 'info' | 'warning' | 'error' };
     propertyOrder?: number;
     onValueChanged?: string;
+    onCollectionChanged?: string;
+    button?: { name?: string };
     range?: { min: number; max: number };
     textarea?: boolean;
     color?: boolean;
@@ -126,6 +130,20 @@ export function HideIf(conditionProperty: string) {
     };
 }
 
+/** 当指定属性值为 true 时启用编辑，为 false 时禁用 (属性仍可见但不可编辑) */
+export function EnableIf(conditionProperty: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { enableIf: conditionProperty });
+    };
+}
+
+/** 当指定属性值为 true 时禁用编辑，为 false 时启用 (属性仍可见但不可编辑) */
+export function DisableIf(conditionProperty: string) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { disableIf: conditionProperty });
+    };
+}
+
 /** 自定义标签文本 */
 export function LabelText(text: string) {
     return function (target: any, propertyKey: string) {
@@ -197,6 +215,13 @@ export function OnCollectionChanged(methodName: string) {
         TaoWuRegistry.register(getClassName(target), propertyKey, { onCollectionChanged: methodName });
     };
 }
+
+/** 在 Inspector 中生成按钮，点击时调用该方法 (类似 Odin Button) */
+export function Button(name?: string) {
+    return function (target: any, propertyKey: string, descriptor?: PropertyDescriptor) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { button: { name } });
+    };
+}
 `
     }
 ];
@@ -204,7 +229,7 @@ export function OnCollectionChanged(methodName: string) {
 const EXAMPLE_TEMPLATES = [
     {
         fileName: "TaoWuDemoComponent.ts",
-        content: `import { _decorator, Component, Color, Vec3, CCInteger } from 'cc';
+        content: `import { _decorator, Component, Color, Vec3, CCInteger, CCString } from 'cc';
 const { ccclass, property } = _decorator;
 
 @ccclass('MapEntry')
@@ -268,6 +293,8 @@ import {
     BoxGroup,
     ShowIf,
     HideIf,
+    EnableIf,
+    DisableIf,
     LabelText,
     ReadOnly,
     PropertyRange,
@@ -277,7 +304,8 @@ import {
     TextArea,
     TableList,
     OnValueChanged,
-    OnCollectionChanged
+    OnCollectionChanged,
+    Button
 } from '../Runtime/TaoWuDecorators';
 
 @ccclass('TaoWuDemoComponent')
@@ -313,6 +341,38 @@ export class TaoWuDemoComponent extends Component {
         console.log('[TaoWuDemo] testList changed:', this.testList);
     }
 
+    // ─── Button 按钮 (类似 Odin Button) ───
+    @Button('重置生命值')
+    resetHealth(): void {
+        this.health = 100;
+        console.log('[TaoWuDemo] health reset to:', this.health);
+    }
+
+    @Button()
+    randomizeHealth(): void {
+        this.health = Math.floor(Math.random() * 100);
+        console.log('[TaoWuDemo] health randomized to:', this.health);
+    }
+
+    @Button('打印调试信息')
+    @FoldoutGroup('回调测试')
+    printDebug(): void {
+        console.log('[TaoWuDemo] Debug:', { health: this.health, speed: this.testSpeed, list: this.testList });
+    }
+
+    @Button('恢复满血')
+    @EnableIf('canFly')
+    fullHealth(): void {
+        this.health = 100;
+        console.log('[TaoWuDemo] full health (enabled when canFly)');
+    }
+
+    @Button('禁用示例')
+    @DisableIf('canFly')
+    disabledWhenFlying(): void {
+        console.log('[TaoWuDemo] This button is disabled when canFly=true');
+    }
+
     // ─── 折叠分组: 角色设置 ───
     @property
     @FoldoutGroup('角色设置')
@@ -327,6 +387,16 @@ export class TaoWuDemoComponent extends Component {
     @FoldoutGroup('角色设置')
     @ShowIf('canFly')
     flySpeed: number = 10;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @EnableIf('canFly')
+    glideSpeed: number = 5;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @DisableIf('canFly')
+    walkSpeed: number = 3;
 
     @property
     @FoldoutGroup('角色设置')
@@ -372,6 +442,16 @@ export class TaoWuDemoComponent extends Component {
     @BoxGroup('外观设置')
     @HideIf('useDefaultSize')
     customSize: Vec3 = new Vec3(1, 1, 1);
+
+    @property
+    @BoxGroup('外观设置')
+    @EnableIf('useDefaultSize')
+    defaultScale: number = 1;
+
+    @property
+    @BoxGroup('外观设置')
+    @DisableIf('useDefaultSize')
+    customScale: number = 2;
 
     @property
     @BoxGroup('外观设置')
@@ -462,7 +542,6 @@ export class TaoWuDemoComponent extends Component {
     baseStats: MapEntry = (() => { const e = new MapEntry(); e.key = 'power'; e.value = 100; return e; })();
 
     // ─── Map 字典测试 ───
-    @property({ type: CCInteger })
     @property({ type: CCInteger })
     @TableList()
     @FoldoutGroup('Map 字典')
@@ -591,7 +670,8 @@ class ExampleImporter {
                     uuid: nodeUuid,
                     component: "TaoWuDemoComponent",
                 });
-            } catch (e) {
+            }
+            catch (e) {
                 console.warn("[TaoWuInspector] 添加组件时出错:", e);
             }
             // 始终保存场景

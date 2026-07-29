@@ -1,4 +1,16 @@
-import { ITaoWuPropertyMeta } from './taowu-utils';
+import { ITaoWuPropertyMeta, evaluateEnabled } from './taowu-utils';
+
+/** 辅助: 通过 scene-script 调用组件方法 */
+async function invokeMethod(compUuid: string, compIndex: number, methodName: string): Promise<void> {
+    try {
+        await Editor.Message.request('scene', 'execute-scene-script', {
+            name: 'taowu-inspector', method: 'invokeMethod',
+            args: [compUuid, compIndex, methodName]
+        });
+    } catch (e) {
+        console.error('[TaoWuInspector] Button invoke error:', e);
+    }
+}
 
 /** 解包 IProperty: {value: 1, type: "Number"} → 1 */
 function unwrapIProp(val: any): any {
@@ -70,6 +82,47 @@ async function triggerCallbacks(compUuid: string, compIndex: number, propName: s
     } catch (e) {}
 }
 
+/** 创建 Button 元素 (类似 Odin Button) */
+export function createButtonElement(
+    methodName: string,
+    taowuMeta: ITaoWuPropertyMeta | undefined,
+    compUuid: string,
+    compIndex: number,
+    properties?: Map<string, any>
+): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'taowu-property-wrapper';
+    wrapper.dataset.propName = methodName;
+
+    const btn = document.createElement('div');
+    btn.className = 'taowu-button';
+    btn.textContent = taowuMeta?.button?.name || methodName;
+    btn.style.userSelect = 'none';
+
+    const isDisabled = !evaluateEnabled(taowuMeta, properties) || !!taowuMeta?.readOnly;
+    if (isDisabled) {
+        btn.classList.add('taowu-button-disabled');
+    }
+
+    btn.addEventListener('click', async () => {
+        if (btn.classList.contains('taowu-button-disabled')) return;
+        btn.classList.add('taowu-button-loading');
+        try {
+            await invokeMethod(compUuid, compIndex, methodName);
+            // 执行后查询最新属性值并刷新面板
+            const contentEl = wrapper.closest('.taowu-content') as any;
+            if (contentEl?.__taowuRerender) {
+                await contentEl.__taowuRerender(undefined, undefined, true);
+            }
+        } finally {
+            btn.classList.remove('taowu-button-loading');
+        }
+    });
+
+    wrapper.appendChild(btn);
+    return wrapper;
+}
+
 /** 创建单个属性的 UI 元素 */
 export function createPropertyElement(
     propName: string,
@@ -79,7 +132,8 @@ export function createPropertyElement(
     taowuMeta?: ITaoWuPropertyMeta,
     isRendering?: () => boolean,
     onPropChanged?: () => void,
-    elementMetadata?: any
+    elementMetadata?: any,
+    properties?: Map<string, any>
 ): HTMLElement {
     const wrapper = document.createElement('div');
     wrapper.className = 'taowu-property-wrapper';
@@ -100,12 +154,14 @@ export function createPropertyElement(
     // ui-prop 需要在 DOM 挂载后重新设置 dump 并 render
     const tagName = input.tagName.toLowerCase();
     if (tagName === 'ui-prop') {
-        if (taowuMeta?.readOnly || propDump.readonly) {
-            input.setAttribute('disabled', '');
-        }
+        const isReadOnly = taowuMeta?.readOnly || propDump.readonly || !evaluateEnabled(taowuMeta, properties);
         requestAnimationFrame(() => {
             try { (input as any).dump = (input as any).dump || propDump; } catch (e) {}
             try { (input as any).render((input as any).dump); } catch (e) {}
+            // render 后设置 disabled，防止 render() 清除
+            if (isReadOnly) {
+                input.setAttribute('disabled', '');
+            }
         });
     }
 
@@ -870,6 +926,8 @@ function createTableListElement(
                     });
                 } else {
                     // 普通对象: 渲染每个子属性
+                    const _elemTypeName = propDump.elementTypeData?.type;
+                    const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
                     for (const subKey of keys) {
                         const subRow = document.createElement('div');
                         subRow.className = 'taowu-collection-row';

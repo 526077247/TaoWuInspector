@@ -6,6 +6,7 @@
 
 - 📦 **分组绘制** — FoldoutGroup / TabGroup / BoxGroup / HorizontalGroup 四种分组方式
 - 🔀 **条件显示** — ShowIf / HideIf 根据其他属性值动态显示/隐藏
+- 🔒 **条件禁用** — EnableIf / DisableIf 根据其他属性值动态启用/禁用编辑（属性仍可见）
 - 🏷️ **自定义标签** — LabelText 修改属性显示名称
 - 🔒 **只读** — ReadOnly 标记属性不可编辑
 - 📊 **数值滑块** — PropertyRange 将数字属性渲染为滑块
@@ -14,8 +15,8 @@
 - 📋 **表格列表** — TableList 将数组渲染为网状表格，支持列宽拖拽
 - 🗂️ **字典表格** — 对 `{ [key: string]: V }` 类型使用 TableList 渲染为 Key-Value 表格
 - 🔁 **排序** — PropertyOrder 控制属性渲染顺序
+- 🔘 **方法按钮** — Button 在 Inspector 中生成按钮，点击调用组件方法
 - 🧩 **嵌套对象** — 支持自定义 class 的嵌套属性渲染
-- ⚡ **滑动条不断触** — 拖动滑块时不会因刷新打断操作
 
 ## 安装
 
@@ -34,6 +35,8 @@ import {
     BoxGroup,
     ShowIf,
     HideIf,
+    EnableIf,
+    DisableIf,
     LabelText,
     ReadOnly,
     PropertyRange,
@@ -41,7 +44,8 @@ import {
     InfoBox,
     PropertyOrder,
     TextArea,
-    TableList
+    TableList,
+    Button
 } from '../Runtime/TaoWuDecorators';
 ```
 
@@ -60,6 +64,16 @@ export class MyComponent extends Component {
     @FoldoutGroup('基础设置')
     @ShowIf('canFly')
     flySpeed: number = 10;
+
+    @property
+    @FoldoutGroup('基础设置')
+    @EnableIf('canFly')
+    glideSpeed: number = 5;
+
+    @property
+    @FoldoutGroup('基础设置')
+    @DisableIf('canFly')
+    walkSpeed: number = 3;
 
     @property
     @FoldoutGroup('基础设置')
@@ -120,6 +134,8 @@ export class MyComponent extends Component {
 |--------|------|------|
 | `@ShowIf(prop)` | `prop: string` — 条件属性名 | 当指定属性值为 true 时显示 |
 | `@HideIf(prop)` | `prop: string` — 条件属性名 | 当指定属性值为 true 时隐藏 |
+| `@EnableIf(prop)` | `prop: string` — 条件属性名 | 当指定属性值为 true 时启用编辑，否则禁用（属性仍可见） |
+| `@DisableIf(prop)` | `prop: string` — 条件属性名 | 当指定属性值为 true 时禁用编辑，否则启用（属性仍可见） |
 
 ### 显示类
 
@@ -171,6 +187,41 @@ onListChanged(): void {
 | 装饰器 | 参数 | 说明 |
 |--------|------|------|
 | `@TableList()` | 无 | 将数组/字典渲染为表格风格 |
+
+### 方法类
+
+| 装饰器 | 参数 | 说明 |
+|--------|------|------|
+| `@Button(name?)` | `name: string` — 按钮显示文本（可选，默认方法名） | 在 Inspector 中生成按钮，点击时调用该方法 |
+
+**使用示例：**
+
+```typescript
+@Button('重置生命值')
+resetHealth(): void {
+    this.health = 100;
+}
+
+@Button()
+randomizeHealth(): void {
+    this.health = Math.floor(Math.random() * 100);
+}
+
+// Button 支持分组、条件等装饰器组合
+@Button('打印调试信息')
+@FoldoutGroup('调试')
+printDebug(): void {
+    console.log('Debug:', { health: this.health });
+}
+
+@Button('恢复满血')
+@EnableIf('canFly')
+fullHealth(): void {
+    this.health = 100;
+}
+```
+
+> Button 是方法装饰器，放在无参的实例方法上。支持与其他装饰器组合：`@FoldoutGroup`、`@BoxGroup`、`@HorizontalGroup`、`@ShowIf`/`@HideIf`、`@EnableIf`/`@DisableIf`、`@PropertyOrder`。
 
 ## TableList 使用
 
@@ -296,6 +347,7 @@ cd extensions/taowu-inspector
 npm install
 npm run build    # 编译 TypeScript
 npm run watch    # 监听模式
+npm test         # 编译并运行测试
 ```
 
 ## 环境要求

@@ -6,7 +6,9 @@ exports.getComponentType = getComponentType;
 exports.getCompIndex = getCompIndex;
 exports.getProperties = getProperties;
 exports.evaluateCondition = evaluateCondition;
+exports.evaluateEnabled = evaluateEnabled;
 exports.organizeProperties = organizeProperties;
+exports.collectAllKeys = collectAllKeys;
 /** Cocos 内置字段前缀 */
 const BUILTIN_PREFIXES = ['_', '__'];
 /** Cocos 内置字段名 */
@@ -113,6 +115,24 @@ function evaluateCondition(meta, properties) {
     }
     return true;
 }
+/** 评估 EnableIf/DisableIf 条件，返回属性是否可编辑 */
+function evaluateEnabled(meta, properties) {
+    if (!meta)
+        return true;
+    if (meta.enableIf) {
+        const prop = properties.get(meta.enableIf);
+        if (prop?.value === false || prop?.value === 0 || !prop?.value) {
+            return false;
+        }
+    }
+    if (meta.disableIf) {
+        const prop = properties.get(meta.disableIf);
+        if (prop?.value === true || prop?.value === 1 || (prop?.value && prop.value !== false)) {
+            return false;
+        }
+    }
+    return true;
+}
 /** 按分组组织属性 */
 function organizeProperties(propertyKeys, taowuMeta) {
     const result = {
@@ -160,5 +180,34 @@ function organizeProperties(propertyKeys, taowuMeta) {
             result.ungrouped.push(key);
         }
     }
+    // 按 propertyOrder 排序 (稳定排序，未指定时默认 0，保持声明顺序)
+    const sortByOrder = (keys) => {
+        keys.sort((a, b) => {
+            const orderA = taowuMeta?.[a]?.propertyOrder ?? 0;
+            const orderB = taowuMeta?.[b]?.propertyOrder ?? 0;
+            return orderA - orderB;
+        });
+    };
+    sortByOrder(result.ungrouped);
+    for (const keys of result.foldoutGroups.values())
+        sortByOrder(keys);
+    for (const tabs of result.tabGroups.values()) {
+        for (const keys of tabs.values())
+            sortByOrder(keys);
+    }
+    for (const keys of result.boxGroups.values())
+        sortByOrder(keys);
+    for (const keys of result.horizontalGroups.values())
+        sortByOrder(keys);
     return result;
+}
+/** 收集所有需要渲染的 key (dump 属性 + Button 方法) */
+function collectAllKeys(properties, taowuMeta) {
+    const keys = Array.from(properties.keys());
+    for (const key of Object.keys(taowuMeta)) {
+        if (taowuMeta[key]?.button && !keys.includes(key)) {
+            keys.push(key);
+        }
+    }
+    return keys;
 }

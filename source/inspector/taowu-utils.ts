@@ -8,6 +8,8 @@ export interface ITaoWuPropertyMeta {
     horizontalGroup?: string;
     showIf?: string;
     hideIf?: string;
+    enableIf?: string;
+    disableIf?: string;
     labelText?: string;
     readOnly?: boolean;
     title?: string;
@@ -15,6 +17,8 @@ export interface ITaoWuPropertyMeta {
     infoBox?: { message: string; type: 'info' | 'warning' | 'error' };
     propertyOrder?: number;
     onValueChanged?: string;
+    onCollectionChanged?: string;
+    button?: { name?: string };
     range?: { min: number; max: number };
     textarea?: boolean;
     color?: boolean;
@@ -138,6 +142,30 @@ export function evaluateCondition(
     return true;
 }
 
+/** 评估 EnableIf/DisableIf 条件，返回属性是否可编辑 */
+export function evaluateEnabled(
+    meta: ITaoWuPropertyMeta | undefined,
+    properties: Map<string, any>
+): boolean {
+    if (!meta) return true;
+
+    if (meta.enableIf) {
+        const prop = properties.get(meta.enableIf);
+        if (prop?.value === false || prop?.value === 0 || !prop?.value) {
+            return false;
+        }
+    }
+
+    if (meta.disableIf) {
+        const prop = properties.get(meta.disableIf);
+        if (prop?.value === true || prop?.value === 1 || (prop?.value && prop.value !== false)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /** 按分组组织属性 */
 export function organizeProperties(
     propertyKeys: string[],
@@ -193,5 +221,36 @@ export function organizeProperties(
         }
     }
 
+    // 按 propertyOrder 排序 (稳定排序，未指定时默认 0，保持声明顺序)
+    const sortByOrder = (keys: string[]) => {
+        keys.sort((a, b) => {
+            const orderA = taowuMeta?.[a]?.propertyOrder ?? 0;
+            const orderB = taowuMeta?.[b]?.propertyOrder ?? 0;
+            return orderA - orderB;
+        });
+    };
+
+    sortByOrder(result.ungrouped);
+    for (const keys of result.foldoutGroups.values()) sortByOrder(keys);
+    for (const tabs of result.tabGroups.values()) {
+        for (const keys of tabs.values()) sortByOrder(keys);
+    }
+    for (const keys of result.boxGroups.values()) sortByOrder(keys);
+    for (const keys of result.horizontalGroups.values()) sortByOrder(keys);
+
     return result;
+}
+
+/** 收集所有需要渲染的 key (dump 属性 + Button 方法) */
+export function collectAllKeys(
+    properties: Map<string, any>,
+    taowuMeta: ITaoWuClassMeta
+): string[] {
+    const keys = Array.from(properties.keys());
+    for (const key of Object.keys(taowuMeta)) {
+        if (taowuMeta[key]?.button && !keys.includes(key)) {
+            keys.push(key);
+        }
+    }
+    return keys;
 }

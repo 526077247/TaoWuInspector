@@ -89,6 +89,59 @@ export const methods = {
         if (!node) return;
         const comp = node.components && node.components[compIndex];
         if (comp) triggerCallbacks(comp, propName);
+    },
+
+    /**
+     * 调用组件上的方法 (Button 装饰器)
+     */
+    async invokeMethod(uuid: string, compIndex: number, methodName: string): Promise<any> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.director) return null;
+        const scene = cc.director.getScene();
+        if (!scene) return null;
+        let comp: any = null;
+        const node = findNodeByUuid(scene, uuid);
+        if (node && node.components) {
+            comp = node.components[compIndex];
+        }
+        if (!comp) {
+            comp = findComponentByUuid(scene, uuid);
+        }
+        if (comp && typeof comp[methodName] === 'function') {
+            try { return await comp[methodName](); }
+            catch (e) { console.error('[TaoWuInspector] invokeMethod error:', e); }
+        }
+        return null;
+    },
+
+    /**
+     * 获取组件当前属性值 (用于 Button 执行后刷新面板)
+     * propKeys: 需要查询的属性名列表 (来自 Inspector dump)
+     */
+    async getComponentDump(uuid: string, compIndex: number, propKeys: string[]): Promise<Record<string, any> | null> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.director) return null;
+        const scene = cc.director.getScene();
+        if (!scene) return null;
+        let comp: any = null;
+        const node = findNodeByUuid(scene, uuid);
+        if (node && node.components) {
+            comp = node.components[compIndex];
+        }
+        if (!comp) {
+            comp = findComponentByUuid(scene, uuid);
+        }
+        if (!comp) return null;
+        const result: Record<string, any> = {};
+        for (const key of propKeys) {
+            try {
+                const val = comp[key];
+                if (val !== undefined) {
+                    result[key] = val;
+                }
+            } catch (e) {}
+        }
+        return result;
     }
 };
 

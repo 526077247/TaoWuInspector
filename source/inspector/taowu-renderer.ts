@@ -3,11 +3,13 @@ import {
     getCompIndex,
     getProperties,
     evaluateCondition,
+    evaluateEnabled,
     organizeProperties,
+    collectAllKeys,
     ITaoWuClassMeta,
     ITaoWuPropertyMeta
 } from './taowu-utils';
-import { createPropertyElement } from './property-drawer';
+import { createPropertyElement, createButtonElement } from './property-drawer';
 import { createFoldoutGroup, createTabGroup, createBoxGroup, createHorizontalGroup } from './group-drawer';
 
 type Selector<$> = { $: Record<keyof $, any | null> };
@@ -330,6 +332,34 @@ const CSS_STYLE = `
 .taowu-list-btn-del:hover {
     color: #f77;
 }
+.taowu-button {
+    cursor: pointer;
+    padding: 6px 16px;
+    font-size: 12px;
+    text-align: center;
+    border-radius: 4px;
+    background: #2a3a4a;
+    color: #6af;
+    border: 1px solid #3a4a5a;
+    user-select: none;
+    transition: background 0.15s;
+    margin: 2px 0;
+}
+.taowu-button:hover {
+    background: #3a4a5a;
+}
+.taowu-button:active {
+    background: #4a5a6a;
+}
+.taowu-button-disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+.taowu-button-loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
 </style>
 `;
 
@@ -356,11 +386,13 @@ interface TaoWuPanelThis extends Selector<typeof $> {
     metadataLoading: boolean;
     metadataRequested: boolean;
     compIndex: number;
+    compUuid: string;
     componentType: string;
     nodeUuid: string;
     metaQueryResult: string;
     rendering: boolean;
     suppressRender: boolean;
+    _lastVisibleKeys?: string;
     /** 记录 ui-section 展开状态 (key: header text) */
     sectionExpandState: Map<string, boolean>;
 }
@@ -396,8 +428,8 @@ function doRender(self: TaoWuPanelThis): void {
     const compIndex = getCompIndex(self.dump);
     self.compIndex = compIndex;
     const properties = getProperties(self.dump);
-    const propKeys = Array.from(properties.keys());
     const taowuMeta: ITaoWuClassMeta = self.taowuMetadata || {};
+    const propKeys = collectAllKeys(properties, taowuMeta);
 
     // Debug info
     const debugLines: string[] = [];
@@ -416,14 +448,36 @@ function doRender(self: TaoWuPanelThis): void {
 
     // 存储 rerender 回调到 DOM，供 property-drawer 在 set-property 后调用
     // 接受可选的 (propName, newVal) 参数，手动 patch self.dump 以防 Cocos 的 update() 覆盖为旧值
-    (self.$.content as any).__taowuRerender = (changedProp?: string, newVal?: any) => {
+    // forceQuery=true 时从场景查询最新属性值 (Button 执行后刷新)
+    (self.$.content as any).__taowuRerender = async (changedProp?: string, newVal?: any, forceQuery?: boolean) => {
+        if (forceQuery) {
+            try {
+                const dumpValue = self.dump.value || self.dump;
+                const propKeys = Object.keys(dumpValue).filter(k => {
+                    if (['enabled', 'enable', 'uuid', 'name', 'type', '__type__', 'node', 'scene', 'target'].includes(k)) return false;
+                    if (k.startsWith('_') || k.startsWith('__')) return false;
+                    return true;
+                });
+                const freshProps = await Editor.Message.request('scene', 'execute-scene-script', {
+                    name: 'taowu-inspector', method: 'getComponentDump',
+                    args: [self.compUuid || self.nodeUuid, self.compIndex, propKeys]
+                });
+                if (freshProps) {
+                    for (const [k, v] of Object.entries(freshProps)) {
+                        if (dumpValue[k]) {
+                            dumpValue[k].value = v;
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
         if (changedProp !== undefined) {
             const dumpValue = self.dump.value || self.dump;
             if (dumpValue[changedProp]) {
                 dumpValue[changedProp].value = newVal;
             }
         }
-        if (conditionsChanged(self)) {
+        if (forceQuery || conditionsChanged(self)) {
             doRender(self);
         } else {
             updatePropDumps(self);
@@ -438,9 +492,15 @@ function doRender(self: TaoWuPanelThis): void {
         const meta = taowuMeta[key];
         if (!evaluateCondition(meta, properties)) continue;
 
+        if (meta?.button) {
+            const el = createButtonElement(key, meta, propUuid, compIndex, properties);
+            content.appendChild(el);
+            continue;
+        }
+
         const propDump = properties.get(key);
         if (propDump) {
-            const el = createPropertyElement(key, propDump, propUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata);
+            const el = createPropertyElement(key, propDump, propUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata, properties);
             content.appendChild(el);
         }
     }
@@ -628,7 +688,7 @@ function conditionsChanged(self: TaoWuPanelThis): boolean {
     if (!self._lastVisibleKeys) return false;
     const properties = getProperties(self.dump);
     const taowuMeta = self.taowuMetadata || {};
-    const organized = organizeProperties(Array.from(properties.keys()), taowuMeta);
+    const organized = organizeProperties(collectAllKeys(properties, taowuMeta), taowuMeta);
     const visibleKeys: string[] = [];
     for (const key of organized.ungrouped) {
         if (evaluateCondition(taowuMeta[key], properties)) visibleKeys.push(key);
@@ -660,45 +720,50 @@ function updatePropDumps(self: TaoWuPanelThis): void {
 
     const properties = getProperties(self.dump);
     const taowuMeta = self.taowuMetadata || {};
-    const organized = organizeProperties(Array.from(properties.keys()), taowuMeta);
 
-    // 收集所有可见属性的 key (按渲染顺序)
-    const allKeys: string[] = [];
-    for (const key of organized.ungrouped) {
-        const meta = taowuMeta[key];
-        if (!evaluateCondition(meta, properties)) continue;
-        allKeys.push(key);
-    }
-    for (const [groupPath, keys] of organized.foldoutGroups) {
-        for (const k of keys) {
-            if (evaluateCondition(taowuMeta[k], properties)) allKeys.push(k);
-        }
-    }
-    for (const [groupName, keys] of organized.boxGroups) {
-        for (const k of keys) {
-            if (evaluateCondition(taowuMeta[k], properties)) allKeys.push(k);
-        }
-    }
+    // 遍历所有顶层属性 wrapper，通过 data-prop-name 精确匹配属性
+    const wrappers = content.querySelectorAll('.taowu-property-wrapper');
+    for (let i = 0; i < wrappers.length; i++) {
+        const wrapper = wrappers[i] as HTMLElement;
+        const propKey = wrapper.dataset.propName;
+        if (!propKey) continue;
 
-    // 遍历所有 ui-prop 元素，更新 dump
-    const propElements = content.querySelectorAll('ui-prop[type="dump"]');
-    let keyIdx = 0;
-    for (let i = 0; i < propElements.length; i++) {
-        const el = propElements[i] as any;
-        if (keyIdx < allKeys.length) {
-            const propKey = allKeys[keyIdx];
-            const propDump = properties.get(propKey);
-            if (propDump) {
-                const meta = taowuMeta[propKey];
-                const dumpCopy = Object.assign({}, propDump);
-                if (meta?.labelText) dumpCopy.displayName = meta.labelText;
-                if (meta?.readOnly) dumpCopy.readonly = true;
-                if (meta?.range) { dumpCopy.slide = true; dumpCopy.min = meta.range.min; dumpCopy.max = meta.range.max; }
-                if (meta?.textarea) dumpCopy.multiline = true;
-                try { el.dump = dumpCopy; } catch (e) {}
+        const meta = taowuMeta[propKey];
+
+        // Button: 更新 disabled 状态
+        if (meta?.button) {
+            const btn = wrapper.querySelector('.taowu-button');
+            if (btn) {
+                const isEnabled = evaluateEnabled(meta, properties);
+                if (!isEnabled || meta?.readOnly) {
+                    btn.classList.add('taowu-button-disabled');
+                } else {
+                    btn.classList.remove('taowu-button-disabled');
+                }
+            }
+            continue;
+        }
+
+        const propDump = properties.get(propKey);
+        if (!propDump) continue;
+
+        const uiProp = wrapper.querySelector('ui-prop[type="dump"]');
+        if (uiProp) {
+            const dumpCopy = Object.assign({}, propDump);
+            if (meta?.labelText) dumpCopy.displayName = meta.labelText;
+            if (meta?.readOnly) dumpCopy.readonly = true;
+            if (meta?.range) { dumpCopy.slide = true; dumpCopy.min = meta.range.min; dumpCopy.max = meta.range.max; }
+            if (meta?.textarea) dumpCopy.multiline = true;
+            try { (uiProp as any).dump = dumpCopy; } catch (e) {}
+
+            // 根据 EnableIf/DisableIf 切换 disabled 状态
+            const isEnabled = evaluateEnabled(meta, properties);
+            if (!isEnabled) {
+                uiProp.setAttribute('disabled', '');
+            } else {
+                uiProp.removeAttribute('disabled');
             }
         }
-        keyIdx++;
     }
 }
 

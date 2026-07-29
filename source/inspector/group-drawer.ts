@@ -1,5 +1,5 @@
-import { ITaoWuPropertyMeta } from './taowu-utils';
-import { createPropertyElement } from './property-drawer';
+import { ITaoWuPropertyMeta, getProperties } from './taowu-utils';
+import { createPropertyElement, createButtonElement } from './property-drawer';
 
 type IsRendering = () => boolean;
 type OnPropChanged = () => void;
@@ -33,10 +33,18 @@ export function createFoldoutGroup(
     content.addEventListener('change', stop);
     content.addEventListener('confirm', stop);
 
+    const properties = getProperties(dump);
+
     for (const key of propKeys) {
+        const meta = taowuMeta[key];
+        if (meta?.button) {
+            const el = createButtonElement(key, meta, compUuid, compIndex, properties);
+            content.appendChild(el);
+            continue;
+        }
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
+            const el = createPropertyElement(key, propDump, compUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata, properties);
             content.appendChild(el);
         }
     }
@@ -68,6 +76,7 @@ export function createTabGroup(
     contentContainer.className = 'taowu-tab-contents';
 
     let firstTab = true;
+    const properties = getProperties(dump);
     for (const [tabName, propKeys] of tabs) {
         const tabBtn = document.createElement('div');
         tabBtn.className = 'taowu-tab-header' + (firstTab ? ' active' : '');
@@ -79,9 +88,15 @@ export function createTabGroup(
         tabContent.dataset.tabName = tabName;
 
         for (const key of propKeys) {
+            const meta = taowuMeta[key];
+            if (meta?.button) {
+                const el = createButtonElement(key, meta, compUuid, compIndex, properties);
+                tabContent.appendChild(el);
+                continue;
+            }
             const propDump = dump.value[key] || dump[key];
             if (propDump) {
-                const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
+                const el = createPropertyElement(key, propDump, compUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata, properties);
                 tabContent.appendChild(el);
             }
         }
@@ -126,10 +141,18 @@ export function createBoxGroup(
     const content = document.createElement('div');
     content.className = 'taowu-box-content';
 
+    const properties = getProperties(dump);
+
     for (const key of propKeys) {
+        const meta = taowuMeta[key];
+        if (meta?.button) {
+            const el = createButtonElement(key, meta, compUuid, compIndex, properties);
+            content.appendChild(el);
+            continue;
+        }
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
+            const el = createPropertyElement(key, propDump, compUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata, properties);
             content.appendChild(el);
         }
     }
@@ -153,10 +176,19 @@ export function createHorizontalGroup(
     const container = document.createElement('div');
     container.className = 'taowu-horizontal-group';
 
+    const properties = getProperties(dump);
+
     for (const key of propKeys) {
+        const meta = taowuMeta[key];
+        if (meta?.button) {
+            const el = createButtonElement(key, meta, compUuid, compIndex, properties);
+            el.classList.add('taowu-horizontal-item');
+            container.appendChild(el);
+            continue;
+        }
         const propDump = dump.value[key] || dump[key];
         if (propDump) {
-            const el = createPropertyElement(key, propDump, compUuid, compIndex, taowuMeta[key], isRendering, onPropChanged, elementMetadata);
+            const el = createPropertyElement(key, propDump, compUuid, compIndex, meta, isRendering, onPropChanged, elementMetadata, properties);
             el.classList.add('taowu-horizontal-item');
             container.appendChild(el);
         }
