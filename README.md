@@ -1,13 +1,13 @@
 # TaoWu Inspector — 属性绘制插件
 
-> 适用于 Cocos Creator 3.8+ 的自定义属性检查器扩展，通过装饰器为组件属性提供分组、条件显示、表格列表等增强绘制功能。
+> 适用于 Cocos Creator 3.8+ 的自定义属性检查器扩展，通过装饰器为组件属性提供分组、条件显示、表格列表等增强绘制功能。同时支持 JsonAsset 资源的内联编辑面板。
 
 ## 功能特性
 
 - 📦 **分组绘制** — FoldoutGroup / TabGroup / BoxGroup / HorizontalGroup 四种分组方式
 - 🔀 **条件显示** — ShowIf / HideIf 根据其他属性值动态显示/隐藏
 - 🔒 **条件禁用** — EnableIf / DisableIf 根据其他属性值动态启用/禁用编辑（属性仍可见）
-- 🏷️ **自定义标签** — LabelText 修改属性显示名称
+- 🏷️ **自定义标签** — LabelText 修改属性显示名称（支持属性级和类级装饰）
 - 🔒 **只读** — ReadOnly 标记属性不可编辑
 - 📊 **数值滑块** — PropertyRange 将数字属性渲染为滑块
 - 📝 **多行文本** — TextArea 将字符串属性渲染为多行输入框
@@ -17,7 +17,7 @@
 - 🔁 **排序** — PropertyOrder 控制属性渲染顺序
 - 🔘 **方法按钮** — Button 在 Inspector 中生成按钮，点击调用组件方法
 - 📋 **值下拉选择** — ValueDropdown 为 number/string 属性提供下拉选择框，支持直接值、方法名、类名.静态方法名
-- 🧩 **嵌套对象** — 支持自定义 class 的嵌套属性渲染
+- 🧩 **嵌套对象** — 支持自定义 class 的嵌套属性递归渲染，嵌套对象内部的装饰器（LabelText、ValueDropdown 等）自动生效
 
 ## 安装
 
@@ -64,7 +64,9 @@ import {
     TextArea,
     TableList,
     Button,
-    ValueDropdown
+    ValueDropdown,
+    OnValueChanged,
+    OnCollectionChanged
 } from '../Runtime/TaoWuDecorators';
 ```
 
@@ -142,7 +144,7 @@ export class MyComponent extends TaoWuCompoent {
 
 | 装饰器 | 参数 | 说明 |
 |--------|------|------|
-| `@LabelText(text)` | `text: string` — 显示文本 | 自定义属性标签文本 |
+| `@LabelText(text)` | `text: string` — 显示文本 | 自定义属性标签文本，也可修饰 class 定义类级别的显示名 |
 | `@Title(title, line?)` | `title: string` — 标题<br>`line: boolean` — 是否显示分割线 | 在属性上方添加标题 |
 | `@InfoBox(msg, type?)` | `msg: string` — 提示内容<br>`type: 'info'\|'warning'\|'error'` | 在属性上方添加信息提示框 |
 
@@ -154,6 +156,23 @@ export class MyComponent extends TaoWuCompoent {
 | `@PropertyRange(min, max)` | `min: number`<br>`max: number` | 将数字属性渲染为滑块 |
 | `@TextArea()` | 无 | 将字符串属性渲染为多行文本框 |
 | `@PropertyOrder(order)` | `order: number` — 排序值 | 控制属性渲染顺序（值大的在后） |
+
+### LabelText 类级装饰
+
+`@LabelText` 可用于 class 定义，作为嵌套对象容器的显示标题：
+
+```typescript
+@ccclass('WeaponConfig')
+@LabelText("武器配置")
+export class WeaponConfig {
+    @property
+    @LabelText("武器名称")
+    weaponName: string = '';
+    // ...
+}
+```
+
+当 `WeaponConfig` 作为嵌套对象渲染时，容器标题显示为 "武器配置" 而非类型名。
 
 ### 值下拉选择
 
@@ -227,10 +246,10 @@ class WeaponConfig {
     elementType: string = 'physical';
 
     @property
-    @ValueDropdown('WeaponConfig.getRarityOptions')
+    @ValueDropdown('getRarityOptions')
     rarity: number = 1;
 
-    static getRarityOptions() {
+    getRarityOptions() {
         return [
             { value: 0, label: '普通' },
             { value: 1, label: '精良' },
@@ -239,7 +258,7 @@ class WeaponConfig {
 }
 ```
 
-> `@ValueDropdown` 仅适用于 `number` 和 `string` 基本类型属性，不适用于自定义 class 对象。在数组/嵌套对象中使用时，每个 number/string 元素会渲染为独立的下拉框。
+> `@ValueDropdown` 仅适用于 `number` 和 `string` 基本类型属性。在数组/嵌套对象中使用时，每个 number/string 元素会渲染为独立的下拉框。JsonAsset 编辑时，方法名形式的 ValueDropdown 通过类名创建临时实例调用方法。
 
 ### 回调类
 
@@ -331,11 +350,12 @@ configTableList: MapEntry[] = [...];
 ```
 
 **表格特点：**
-- 表头显示 `#` - 字段名（自动从 camelCase 转为 Title Case）
+- 表头显示 `#` - 字段名（自动从 camelCase 转为 Title Case，或使用 LabelText）
 - 每行显示一个元素的序号、各字段值、删除按钮
 - 表头列宽可拖拽调整
 - 简单类型（Number/String）显示 `#` - `Item` 表头
 - Cocos 内置类型（Vec3/Color/Size）使用原生 `ui-prop` 渲染
+- 自定义 CCClass 类型递归渲染嵌套对象，支持 LabelText / ValueDropdown 等装饰器
 
 ### 字典表格
 
@@ -362,7 +382,7 @@ dropRateMap: { [key: string]: string } = { gold: '75%', silver: '50%' };
 不带 `@TableList()` 的数组使用以下风格：
 
 - **简单类型**（Number/String）：`序号 + 内容 + 删除按钮`，单行布局
-- **对象类型**（如 MapEntry）：折叠盒子，标题显示类型名 + 序号，内部垂直排列各字段
+- **对象类型**（如 MapEntry）：折叠盒子，标题显示类型名或 `@LabelText` + 序号，内部垂直排列各字段
 - **Cocos 类型**（Vec3/Color）：与简单类型相同的行布局，使用原生 `ui-prop` 渲染
 
 ## 嵌套对象渲染
@@ -371,13 +391,16 @@ dropRateMap: { [key: string]: string } = { gold: '75%', silver: '50%' };
 
 ```typescript
 @ccclass('WeaponConfig')
-class WeaponConfig {
+@LabelText("武器配置")
+export class WeaponConfig {
     @property
     @LabelText("武器名称")
     weaponName: string = '';
+
     @property
     @LabelText("伤害")
     damage: number = 0;
+
     // 支持继续嵌套
     @property({ type: MapEntry })
     @LabelText("附魔属性")
@@ -389,43 +412,117 @@ class WeaponConfig {
 equippedWeapon: WeaponConfig = new WeaponConfig();
 ```
 
+**嵌套对象特点：**
+- 容器标题优先使用类级 `@LabelText`，其次类型名
+- 子属性标签使用属性级 `@LabelText`
+- 支持 `@ValueDropdown`、`@PropertyRange` 等所有装饰器
+- 深层嵌套自动递归渲染
+
+## JsonAsset Inspector
+
+选中 `.json` 资源文件时，TaoWu Inspector 自动接管 Inspector 面板，提供可视化编辑。
+
+### 基本用法
+
+1. 创建一个带 `_t` 字段的 JSON 文件，`_t` 值为 TS 类名：
+
+```json
+{
+    "_t": "TaoWuDemoConfig",
+    "componentName": "Demo",
+    "health": 100,
+    "moveSpeed": 5,
+    "canFly": false
+}
+```
+
+2. 对应的 TS 类用 `@ccclass` 注册并用 TaoWu 装饰器标注：
+
+```typescript
+@ccclass('TaoWuDemoConfig')
+export class TaoWuDemoConfig {
+    @property
+    componentName: string = 'Demo';
+
+    @property
+    @PropertyRange(0, 100)
+    health: number = 100;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @LabelText("移动速度")
+    moveSpeed: number = 5;
+
+    @property
+    @FoldoutGroup('角色设置')
+    canFly: boolean = false;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @ShowIf('canFly')
+    flySpeed: number = 10;
+}
+```
+
+3. 在 Inspector 中选中该 JSON 文件，即可看到与组件 Inspector 一致的分组渲染。
+
+### JSON 格式要求
+
+- **`_t` 字段** — 必须为 TS 类名（`@ccclass` 注册的名称），用于匹配元数据
+- **嵌套对象** — 嵌套的自定义 class 对象也需要 `_t` 字段标识类型
+- **Cocos 类型** — Vec3/Color 等直接写原始字段（`{x:0,y:0,z:0}`），不需要 `_t`
+- **缺失字段** — JSON 中缺失的字段会自动从类定义推断默认值并补全
+- **空 JSON** — `{"_t":"TaoWuDemoConfig"}` 也能显示完整的类字段
+
+### JsonAsset 编辑特性
+
+| 特性 | 说明 |
+|------|------|
+| 分组渲染 | FoldoutGroup / TabGroup / BoxGroup / HorizontalGroup 一致支持 |
+| 条件显示 | ShowIf / HideIf 修改条件属性后自动刷新 |
+| 条件禁用 | EnableIf / DisableIf 动态启用/禁用编辑（属性仍可见），修改条件属性后自动刷新 |
+| 只读 | ReadOnly 标记属性不可编辑，对所有元素类型生效（ui-prop/ui-num-input/ui-checkbox 等） |
+| LabelText | 属性级和类级 `@LabelText` 均生效 |
+| ValueDropdown | 方法名形式通过类名创建临时实例调用 |
+| 数组编辑 | 支持增删元素，空数组根据类型推断默认值 |
+| TableList | 表格渲染、列宽拖拽、嵌套对象递归渲染 |
+| 嵌套对象 | 递归渲染所有 `_t` 类型的字段，装饰器自动应用 |
+| 自动保存 | 离开面板自动保存，也可手动点击保存按钮 |
+| 滑块不断触 | 拖动滑块时不会重建 DOM，仅 ShowIf/HideIf/EnableIf/DisableIf 条件变化时才重新渲染 |
+
+> **不适用功能**：`@Button`、`@OnValueChanged`、`@OnCollectionChanged` 需要运行时组件实例，JsonAsset 无运行时实例，不支持。
+
 ## 项目结构
 
 ```
 extensions/taowu-inspector/
-├── package.json          # 扩展配置
-├── tsconfig.json         # TypeScript 配置
-├── README.md             # 本文档
-├── source/               # TypeScript 源码
-│   ├── main.ts           # 扩展主入口
-│   ├── example-importer.ts  # 示例导入器
-│   ├── scene-script.ts   # 场景脚本（元数据查询）
+├── package.json              # 扩展配置
+├── tsconfig.json             # TypeScript 配置
+├── README.md                 # 本文档
+├── source/                   # TypeScript 源码
+│   ├── main.ts               # 扩展主入口（消息转发）
+│   ├── example-importer.ts   # 示例导入器（Runtime/Example 模板）
+│   ├── scene-script.ts       # 场景脚本（元数据查询、属性类型推断、ValueDropdown 解析）
 │   └── inspector/
-│       ├── taowu-renderer.ts  # Inspector 面板渲染器
-│       ├── property-drawer.ts # 属性绘制器
-│       ├── group-drawer.ts    # 分组绘制器
-│       └── taowu-utils.ts     # 工具函数
-├── dist/                 # 编译输出
-│   ├── main.js
-│   ├── scene-script.js
-│   ├── example-importer.js
-│   └── inspector/
-│       ├── taowu-renderer.js
-│       ├── property-drawer.js
-│       ├── group-drawer.js
-│       ├── taowu-utils.js
-│       └── ...
-└── @types/               # 类型定义
+│       ├── taowu-renderer.ts     # 组件 Inspector 面板渲染器
+│       ├── property-drawer.ts    # 属性绘制器（List/TableList/Map/ValueDropdown 等）
+│       ├── group-drawer.ts       # 分组绘制器（FoldoutGroup/TabGroup/BoxGroup/HorizontalGroup）
+│       ├── taowu-utils.ts       # 工具函数（类型检测、条件评估、属性组织）
+│       └── json-asset-renderer.ts # JsonAsset Inspector 渲染器
+├── dist/                     # 编译输出
+└── @types/                   # 类型定义
 
 assets/TaoWuInspector/
-├── Runtime/              # 运行时脚本（由扩展导入）
-│   ├── TaoWuTypes.ts    # 类型定义
-│   ├── TaoWuRegistry.ts # 元数据注册中心
-│   ├── TaoWuDecorators.ts # 装饰器
-│   └── TaoWuCompoent.ts # 基础组件类（继承后自动启用 TaoWu Inspector）
-└── Example/              # 示例（由扩展导入）
-    ├── TaoWuDemoComponent.ts
-    └── TaoWuDemo.scene
+├── Runtime/                  # 运行时脚本（由扩展导入）
+│   ├── TaoWuTypes.ts        # 类型定义
+│   ├── TaoWuRegistry.ts     # 元数据注册中心
+│   ├── TaoWuDecorators.ts   # 装饰器实现
+│   └── TaoWuCompoent.ts     # 基础组件类（继承后自动启用 TaoWu Inspector）
+└── Example/                  # 示例（由扩展导入）
+    ├── TaoWuDemoComponent.ts # 组件示例（所有装饰器演示）
+    ├── TaoWuDemoConfig.ts    # JsonAsset 配置示例
+    ├── TaoWuDemo.json        # JSON 数据示例
+    └── TaoWuDemo.scene       # 示例场景
 ```
 
 ## 构建

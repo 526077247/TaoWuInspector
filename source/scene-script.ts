@@ -41,6 +41,55 @@ export const methods = {
         return false;
     },
 
+    /** 查询 Cocos 类的属性类型信息 (@property 装饰器中的 type) */
+    getClassPropertyTypes(className: string): any {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.js) return null;
+        const cls = cc.js.getClassByName(className);
+        if (!cls) return null;
+
+        const result: any = {};
+        const attrs = (cls as any).__attrs__ || {};
+        const propNames = (cls as any).__props__ || Object.keys(attrs).map(k => k.split('$_$')[0]).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i);
+        for (const propName of propNames) {
+            // Cocos 3.8.7: 属性类型信息存储在 __attrs__[propName$_$type] 和 [propName$_$ctor]
+            const typeKey = propName + '$_$type';
+            const ctorKey = propName + '$_$ctor';
+            const typeVal = attrs[typeKey];
+            const ctorVal = attrs[ctorKey];
+            // 优先用 ctor (构造函数，包含真实类名)，type 可能是通用类型名 'Object'
+            const ctorInfo = ctorVal;
+            const typeInfo = ctorInfo || typeVal;
+            if (typeInfo) {
+                let elemName = '';
+                let isArray = false;
+                if (Array.isArray(typeInfo)) {
+                    isArray = true;
+                    const elemCls = typeInfo[0];
+                    elemName = (typeof elemCls === 'function') ? (elemCls.name || '') : (typeof elemCls === 'string' ? elemCls : '');
+                } else if (typeof typeInfo === 'function') {
+                    elemName = typeInfo.name || '';
+                } else if (typeof typeInfo === 'string') {
+                    elemName = typeInfo;
+                }
+                if (elemName) {
+                    result[propName] = { isArray: isArray, elementType: elemName };
+                }
+            } else {
+                // 无 type 参数的 @property: 从默认值推断类型
+                const defaultKey = propName + '$_$default';
+                const defaultVal = attrs[defaultKey];
+                if (defaultVal !== undefined) {
+                    const defaultType = typeof defaultVal;
+                    if (defaultType === 'number' || defaultType === 'string' || defaultType === 'boolean') {
+                        result[propName] = { isArray: false, elementType: defaultType.charAt(0).toUpperCase() + defaultType.slice(1) };
+                    }
+                }
+            }
+        }
+        return result;
+    },
+
     /**
      * 设置字典属性 (绕过 set-property 的 dump 限制)
      */
@@ -190,6 +239,40 @@ export const methods = {
                 }
             }
         }
+        return null;
+    },
+
+    /**
+     * 通过类名解析 ValueDropdown 的 memberName (用于 JsonAsset，无组件实例)
+     * 创建临时类实例调用方法
+     */
+    async resolveValueDropdownByClassName(className: string, memberName: string): Promise<any> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.js) return null;
+        // 支持 "ClassName.staticMethod" 格式
+        if (memberName.includes('.')) {
+            return findMember(null, memberName);
+        }
+        const cls = cc.js.getClassByName(className);
+        if (!cls) return null;
+        // 尝试静态方法
+        if (typeof cls[memberName] === 'function') {
+            try { return cls[memberName](); } catch (e) { /* ignore */ }
+        }
+        // 尝试静态字段
+        if (cls[memberName] !== undefined && Array.isArray(cls[memberName])) {
+            return cls[memberName];
+        }
+        // 创建临时实例调用方法
+        try {
+            const instance = new cls();
+            if (instance && typeof instance[memberName] === 'function') {
+                return instance[memberName]();
+            }
+            if (instance && instance[memberName] !== undefined && Array.isArray(instance[memberName])) {
+                return instance[memberName];
+            }
+        } catch (e) { /* ignore */ }
         return null;
     }
 };

@@ -22,6 +22,9 @@
             "section": {
                 "node": {
                     "TaoWuCompoent": "./dist/inspector/taowu-renderer.js"
+                },
+                "asset": {
+                    "json": "./dist/inspector/json-asset-renderer.js"
                 }
             }
         },
@@ -46,6 +49,15 @@
             },
             "resolve-value-dropdown": {
                 "methods": ["resolveValueDropdown"]
+            },
+            "resolve-value-dropdown-by-class": {
+                "methods": ["resolveValueDropdownByClassName"]
+            },
+            "read-asset-file": {
+                "methods": ["readAssetFile"]
+            },
+            "query-class-property-types": {
+                "methods": ["queryClassPropertyTypes"]
             },
             "installRuntime": {
                 "methods": ["installRuntime"]

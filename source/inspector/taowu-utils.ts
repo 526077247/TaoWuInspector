@@ -31,7 +31,8 @@ export interface ITaoWuPropertyMeta {
 }
 
 export interface ITaoWuClassMeta {
-    [propertyKey: string]: ITaoWuPropertyMeta;
+    __class__?: { labelText?: string };
+    [propertyKey: string]: any;
 }
 
 /** Cocos 内置字段前缀 */
@@ -132,14 +133,17 @@ export function evaluateCondition(
 
     if (meta.showIf) {
         const prop = properties.get(meta.showIf);
-        if (prop?.value === false || prop?.value === 0 || !prop?.value) {
+        // 兼容两种格式: IProperty {value: T} 和 原始值 T
+        const val = (prop && typeof prop === 'object' && prop.value !== undefined) ? prop.value : prop;
+        if (val === false || val === 0 || !val) {
             return false;
         }
     }
 
     if (meta.hideIf) {
         const prop = properties.get(meta.hideIf);
-        if (prop?.value === true || prop?.value === 1 || (prop?.value && prop.value !== false)) {
+        const val = (prop && typeof prop === 'object' && prop.value !== undefined) ? prop.value : prop;
+        if (val === true || val === 1 || (val && val !== false)) {
             return false;
         }
     }
@@ -156,14 +160,16 @@ export function evaluateEnabled(
 
     if (meta.enableIf) {
         const prop = properties.get(meta.enableIf);
-        if (prop?.value === false || prop?.value === 0 || !prop?.value) {
+        const val = (prop && typeof prop === 'object' && prop.value !== undefined) ? prop.value : prop;
+        if (val === false || val === 0 || !val) {
             return false;
         }
     }
 
     if (meta.disableIf) {
         const prop = properties.get(meta.disableIf);
-        if (prop?.value === true || prop?.value === 1 || (prop?.value && prop.value !== false)) {
+        const val = (prop && typeof prop === 'object' && prop.value !== undefined) ? prop.value : prop;
+        if (val === true || val === 1 || (val && val !== false)) {
             return false;
         }
     }
@@ -253,6 +259,7 @@ export function collectAllKeys(
 ): string[] {
     const keys = Array.from(properties.keys());
     for (const key of Object.keys(taowuMeta)) {
+        if (key === '__class__') continue;
         if (taowuMeta[key]?.button && !keys.includes(key)) {
             keys.push(key);
         }

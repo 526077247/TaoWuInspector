@@ -380,14 +380,16 @@ function doRender(self) {
     const content = self.$.content;
     if (!content || !self.dump)
         return;
-    // 渲染前: 记录所有 ui-section 的展开状态
+    // 渲染前: 记录所有 ui-section 的展开状态 (用 data-prop-name 优先，避免数量变化导致 key 不匹配)
     if (!self.sectionExpandState)
         self.sectionExpandState = new Map();
     const existingSections = content.querySelectorAll('ui-section');
     existingSections.forEach((sec) => {
+        const propKey = sec.getAttribute('data-prop-name');
         const header = sec.getAttribute('header');
-        if (header) {
-            self.sectionExpandState.set(header, sec.hasAttribute('expand'));
+        const key = propKey || header;
+        if (key) {
+            self.sectionExpandState.set(key, sec.hasAttribute('expand'));
         }
     });
     // 渲染期间阻止 change 事件
@@ -506,9 +508,11 @@ function doRender(self) {
     {
         const newSections = content.querySelectorAll('ui-section');
         newSections.forEach((sec) => {
+            const propKey = sec.getAttribute('data-prop-name');
             const header = sec.getAttribute('header');
-            if (header && self.sectionExpandState.has(header)) {
-                if (self.sectionExpandState.get(header)) {
+            const key = propKey || header;
+            if (key && self.sectionExpandState.has(key)) {
+                if (self.sectionExpandState.get(key)) {
                     sec.setAttribute('expand', '');
                 }
                 else {

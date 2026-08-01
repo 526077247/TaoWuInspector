@@ -2,81 +2,40 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createButtonElement = createButtonElement;
 exports.createPropertyElement = createPropertyElement;
+exports.createInputElement = createInputElement;
 const taowu_utils_1 = require("./taowu-utils");
+const json_asset_renderer_1 = require("./json-asset-renderer");
+/** 辅助: 调用 set-property，json-edit 模式跳过 */
+async function safeSetProperty(compUuid, path, dump) {
+    if (compUuid === 'json-edit' || !compUuid) {
+        if (compUuid === 'json-edit' && json_asset_renderer_1.jsonState.asset) {
+            json_asset_renderer_1.jsonState.dirty = true;
+            if (json_asset_renderer_1.jsonState.onDirty)
+                json_asset_renderer_1.jsonState.onDirty();
+        }
+        return null;
+    }
+    return await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path, dump });
+}
 /** 辅助: 通过 scene-script 调用组件方法 */
 async function invokeMethod(compUuid, compIndex, methodName) {
     try {
         await Editor.Message.request('scene', 'execute-scene-script', {
-            name: 'taowu-inspector', method: 'invokeMethod',
+            name: 'taowu-inspector',
+            method: 'invokeMethod',
             args: [compUuid, compIndex, methodName]
         });
+        const contentEl = document.querySelector('.taowu-content');
+        if (contentEl?.__taowuRerender) {
+            await contentEl.__taowuRerender(undefined, undefined, true);
+        }
     }
-    catch (e) {
-        console.error('[TaoWuInspector] Button invoke error:', e);
+    finally {
+        const btns = document.querySelectorAll('.taowu-button');
+        btns.forEach(btn => btn.classList.remove('taowu-button-loading'));
     }
 }
-/** 解包 IProperty: {value: 1, type: "Number"} → 1 */
-function unwrapIProp(val) {
-    if (val && typeof val === 'object' && val.value !== undefined && (val.type !== undefined || val.path !== undefined)) {
-        return val.value;
-    }
-    return val;
-}
-/** 解包 Vec/Color/Size 的子属性 IProperty */
-function unwrapVecValue(val, keys) {
-    if (!val || typeof val !== 'object')
-        return val;
-    const result = {};
-    for (const k of keys) {
-        result[k] = unwrapIProp(val[k]);
-    }
-    return result;
-}
-/** 为表头添加拖拽调整列宽手柄 */
-function syncColumnWidths(headerRow, container) {
-    const headerCells = Array.from(headerRow.querySelectorAll('.taowu-table-cell'));
-    headerCells.forEach((cell, idx) => {
-        if (cell.querySelector('.taowu-col-resizer'))
-            return;
-        const resizer = document.createElement('div');
-        resizer.className = 'taowu-col-resizer';
-        cell.appendChild(resizer);
-        let startX = 0;
-        let startW = 0;
-        resizer.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            startX = e.clientX;
-            startW = cell.getBoundingClientRect().width;
-            const onMove = (ev) => {
-                const newW = Math.max(40, startW + ev.clientX - startX);
-                cell.style.flex = '0 0 ' + newW + 'px';
-                // 同步到数据行
-                const dataRows = container.querySelectorAll('.taowu-table-row:not(.taowu-table-header)');
-                dataRows.forEach(row => {
-                    const cells = row.querySelectorAll('.taowu-table-cell');
-                    if (cells[idx])
-                        cells[idx].style.flex = '0 0 ' + newW + 'px';
-                });
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-            };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-        });
-    });
-}
-/** camelCase 转为 Title Case (如 configMap → Config Map) */
-function toDisplayName(str) {
-    return str
-        .replace(/([a-z])([A-Z])/g, '$1 $2')
-        .replace(/[_-]/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase())
-        .trim();
-}
-/** 触发 OnValueChanged / OnCollectionChanged 回调 */
+/** 辅助: 触发 OnValueChanged / OnCollectionChanged 回调 */
 async function triggerCallbacks(compUuid, compIndex, propName) {
     try {
         await Editor.Message.request('scene', 'execute-scene-script', {
@@ -86,79 +45,9 @@ async function triggerCallbacks(compUuid, compIndex, propName) {
     }
     catch (e) { }
 }
-/** 创建 Button 元素 (类似 Odin Button) */
-function createButtonElement(methodName, taowuMeta, compUuid, compIndex, properties) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'taowu-property-wrapper';
-    wrapper.dataset.propName = methodName;
-    const btn = document.createElement('div');
-    btn.className = 'taowu-button';
-    btn.textContent = taowuMeta?.button?.name || methodName;
-    btn.style.userSelect = 'none';
-    const isDisabled = !(0, taowu_utils_1.evaluateEnabled)(taowuMeta, properties) || !!taowuMeta?.readOnly;
-    if (isDisabled) {
-        btn.classList.add('taowu-button-disabled');
-    }
-    btn.addEventListener('click', async () => {
-        if (btn.classList.contains('taowu-button-disabled'))
-            return;
-        btn.classList.add('taowu-button-loading');
-        try {
-            await invokeMethod(compUuid, compIndex, methodName);
-            // 执行后查询最新属性值并刷新面板
-            const contentEl = wrapper.closest('.taowu-content');
-            if (contentEl?.__taowuRerender) {
-                await contentEl.__taowuRerender(undefined, undefined, true);
-            }
-        }
-        finally {
-            btn.classList.remove('taowu-button-loading');
-        }
-    });
-    wrapper.appendChild(btn);
-    return wrapper;
-}
-/** 创建单个属性的 UI 元素 */
-function createPropertyElement(propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata, properties) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'taowu-property-wrapper';
-    wrapper.dataset.propName = propName;
-    if (taowuMeta?.title) {
-        const titleEl = createTitleElement(taowuMeta.title, taowuMeta.titleHorizontalLine ?? true);
-        wrapper.appendChild(titleEl);
-    }
-    if (taowuMeta?.infoBox) {
-        const infoEl = createInfoBoxElement(taowuMeta.infoBox.message, taowuMeta.infoBox.type);
-        wrapper.appendChild(infoEl);
-    }
-    const input = createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering, false, elementMetadata);
-    // ui-prop[type="dump"] 需要在 DOM 挂载后重新设置 dump 并 render
-    // 但 ValueDropdown 的 ui-prop 不需要 render (手动放了 ui-select)
-    const tagName = input.tagName.toLowerCase();
-    if (tagName === 'ui-prop' && input.getAttribute('type') === 'dump' && !input.hasAttribute('data-value-dropdown')) {
-        const isReadOnly = taowuMeta?.readOnly || propDump.readonly || !(0, taowu_utils_1.evaluateEnabled)(taowuMeta, properties);
-        requestAnimationFrame(() => {
-            try {
-                input.dump = input.dump || propDump;
-            }
-            catch (e) { }
-            try {
-                input.render(input.dump);
-            }
-            catch (e) { }
-            if (isReadOnly) {
-                input.setAttribute('disabled', '');
-            }
-        });
-    }
-    wrapper.appendChild(input);
-    // List/TableList/Map/ValueDropdown 自带事件监听，跳过常规 setupChangeListener
-    const isContainer = input.classList.contains('taowu-collection');
-    const isValueDropdown = input.hasAttribute('data-value-dropdown');
-    if (!isContainer && !isValueDropdown) {
-        setupChangeListener(input, propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged);
-    }
-    return wrapper;
+/** camelCase 转为 Title Case (如 configMap → Config Map) */
+function toDisplayName(str) {
+    return str.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
 }
 /** 构建标准 set-property path */
 function buildPath(propDump, compIndex, propName) {
@@ -166,13 +55,14 @@ function buildPath(propDump, compIndex, propName) {
     return rawPath.replace(/^__comps__[_.]*(\d+)[_.]/, (_m, idx) => `__comps__.${idx}.`);
 }
 /** 统一 Box 容器 (可折叠, 默认折叠) */
-function createBoxContainer(title) {
+function createBoxContainer(title, propName) {
     const section = document.createElement('ui-section');
     section.className = 'taowu-collection taowu-box';
     section.setAttribute('header', title);
+    if (propName)
+        section.setAttribute('data-prop-name', propName);
     const content = document.createElement('div');
     content.className = 'taowu-box-content';
-    // 拦截所有冒泡到 content 的事件，阻止触发 ui-section 折叠
     const stop = (e) => e.stopPropagation();
     content.addEventListener('click', stop);
     content.addEventListener('mousedown', stop);
@@ -182,97 +72,234 @@ function createBoxContainer(title) {
     section.appendChild(content);
     return { container: section, content };
 }
-/** 创建添加按钮 */
 function createAddButton(text) {
     const btn = document.createElement('div');
     btn.className = 'taowu-list-btn taowu-list-btn-add';
     btn.textContent = text;
     return btn;
 }
-/** 创建删除按钮 */
 function createDelButton(text) {
     const btn = document.createElement('span');
     btn.className = 'taowu-list-btn taowu-list-btn-del';
     btn.textContent = text;
     return btn;
 }
-/** 根据属性类型创建输入元素 */
+function createTitleElement(title, horizontalLine) {
+    const container = document.createElement('div');
+    container.className = 'taowu-title';
+    const text = document.createElement('span');
+    text.className = 'taowu-title-text';
+    text.textContent = title;
+    container.appendChild(text);
+    if (horizontalLine) {
+        const line = document.createElement('hr');
+        line.className = 'taowu-title-line';
+        container.appendChild(line);
+    }
+    return container;
+}
+function createInfoBoxElement(message, type) {
+    const box = document.createElement('div');
+    box.className = `taowu-infobox taowu-infobox-${type}`;
+    box.textContent = message;
+    return box;
+}
+function createButtonElement(propName, taowuMeta, compUuid, compIndex, properties) {
+    const btn = document.createElement('div');
+    btn.className = 'taowu-button';
+    btn.textContent = taowuMeta.button?.name || toDisplayName(propName);
+    btn.addEventListener('click', async () => {
+        btn.classList.add('taowu-button-loading');
+        try {
+            await invokeMethod(compUuid, compIndex, propName);
+        }
+        finally {
+            btn.classList.remove('taowu-button-loading');
+        }
+    });
+    const wrapper = document.createElement('div');
+    wrapper.className = 'taowu-property-wrapper';
+    wrapper.appendChild(btn);
+    return wrapper;
+}
+function createPropertyElement(propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged, elementMetadata, properties) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'taowu-property-wrapper';
+    wrapper.dataset.propName = propName;
+    // ShowIf/HideIf 条件检查
+    if (taowuMeta?.showIf || taowuMeta?.hideIf) {
+        const condProps = new Map();
+        if (json_asset_renderer_1.jsonState.asset && typeof json_asset_renderer_1.jsonState.asset === 'object') {
+            for (const k of Object.keys(json_asset_renderer_1.jsonState.asset)) {
+                if (k !== '_t')
+                    condProps.set(k, json_asset_renderer_1.jsonState.asset[k]);
+            }
+        }
+        if (!(0, taowu_utils_1.evaluateCondition)(taowuMeta, condProps)) {
+            wrapper.style.display = 'none';
+        }
+    }
+    // EnableIf/DisableIf
+    const condProps2 = new Map();
+    if (json_asset_renderer_1.jsonState.asset && typeof json_asset_renderer_1.jsonState.asset === 'object') {
+        for (const k of Object.keys(json_asset_renderer_1.jsonState.asset)) {
+            if (k !== '_t')
+                condProps2.set(k, json_asset_renderer_1.jsonState.asset[k]);
+        }
+    }
+    const isEnabled = (0, taowu_utils_1.evaluateEnabled)(taowuMeta, condProps2);
+    if (taowuMeta?.title) {
+        wrapper.appendChild(createTitleElement(taowuMeta.title, taowuMeta.titleHorizontalLine ?? true));
+    }
+    if (taowuMeta?.infoBox) {
+        wrapper.appendChild(createInfoBoxElement(taowuMeta.infoBox.message, taowuMeta.infoBox.type));
+    }
+    const input = createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering, false, elementMetadata);
+    const tagName = input.tagName.toLowerCase();
+    const isReadOnly = taowuMeta?.readOnly || propDump.readonly || !isEnabled;
+    if (tagName === 'ui-prop' && input.getAttribute('type') === 'dump' && !input.hasAttribute('data-value-dropdown')) {
+        requestAnimationFrame(() => {
+            try {
+                input.dump = input.dump || propDump;
+            }
+            catch (e) { }
+            try {
+                input.render(input.dump);
+            }
+            catch (e) { }
+            if (isReadOnly)
+                input.setAttribute('disabled', '');
+        });
+    }
+    else if (input.hasAttribute('data-value-dropdown')) {
+        // ValueDropdown 的 ui-prop
+        if (isReadOnly) {
+            requestAnimationFrame(() => {
+                const select = input.querySelector('ui-select');
+                if (select)
+                    select.setAttribute('disabled', '');
+            });
+        }
+    }
+    else {
+        // 原生元素: ui-num-input, ui-input, ui-checkbox, ui-select, ui-vec3, ui-color 等
+        if (isReadOnly) {
+            if (tagName === 'ui-checkbox') {
+                input.style.pointerEvents = 'none';
+                input.style.opacity = '0.6';
+            }
+            else {
+                input.setAttribute('disabled', '');
+                input.setAttribute('readonly', '');
+            }
+        }
+    }
+    if (['ui-vec3', 'ui-vec2', 'ui-vec4', 'ui-color', 'ui-size'].includes(tagName)) {
+        const val = propDump.value;
+        const trySetValue = (attempts) => {
+            if (attempts <= 0)
+                return;
+            requestAnimationFrame(() => {
+                try {
+                    if (tagName === 'ui-vec3')
+                        input.value = { x: val.x, y: val.y, z: val.z };
+                    else if (tagName === 'ui-vec2')
+                        input.value = { x: val.x, y: val.y };
+                    else if (tagName === 'ui-vec4')
+                        input.value = { x: val.x, y: val.y, z: val.z, w: val.w || 0 };
+                    else if (tagName === 'ui-color')
+                        input.value = { r: val.r, g: val.g, b: val.b, a: val.a != null ? val.a : 255 };
+                    else if (tagName === 'ui-size')
+                        input.value = { width: val.width, height: val.height };
+                    const cv = input.value;
+                    if (!cv || (cv.x === undefined && cv.r === undefined))
+                        trySetValue(attempts - 1);
+                }
+                catch (e) {
+                    trySetValue(attempts - 1);
+                }
+            });
+        };
+        trySetValue(5);
+    }
+    wrapper.appendChild(input);
+    const isContainer = input.classList.contains('taowu-collection');
+    const isValueDropdown = input.hasAttribute('data-value-dropdown');
+    if (!isContainer && !isValueDropdown) {
+        setupChangeListener(input, propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged);
+    }
+    return wrapper;
+}
 function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering, rawElement, elementMetadata) {
     const type = (propDump.type || '').toLowerCase();
     const value = propDump.value;
-    // Array — List 或 TableList (必须在 ValueDropdown 之前，数组走 List 渲染)
     if (propDump.isArray || Array.isArray(value)) {
-        if (taowuMeta?.tableList) {
+        if (taowuMeta?.tableList)
             return createTableListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
-        }
         return createListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
-    // 检测 Vec3[] / Color[] 等: type 是 cc.Vec3 但 value 是数组
     if (type.startsWith('cc.') && Array.isArray(value)) {
-        if (taowuMeta?.tableList) {
+        if (taowuMeta?.tableList)
             return createTableListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
-        }
         return createListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
-    // rawElement: 用于 List/TableList/Map 内部元素
-    if (rawElement) {
+    if (rawElement)
         return createRawInputElement(propDump, taowuMeta, compUuid, compIndex);
-    }
-    // ValueDropdown — 下拉选择框 (仅在非数组、非 rawElement 时生效)
-    if (taowuMeta?.valueDropdown) {
+    if (taowuMeta?.valueDropdown)
         return createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering);
-    }
-    // Object/Map — 非 cc.* 类型的对象且有实际属性
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)
-        && !type.startsWith('cc.') && Object.keys(value).length > 0) {
-        if (taowuMeta?.tableList) {
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && !type.startsWith('cc.') && Object.keys(value).length > 0) {
+        if (taowuMeta?.tableList)
             return createDictTableElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta);
-        }
         return createMapElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
-    // 所有简单类型 (Number, String, Boolean, Enum, Vec, Color, Size, Asset, Node 等)
-    // 统一使用 ui-prop + dump，让 Cocos 原生渲染 label 和输入框，确保对齐
+    if (type === 'cc.jsonasset' || type === 'jsonasset')
+        return createJsonAssetElement(propDump, taowuMeta, compUuid, compIndex, propName);
     const prop = document.createElement('ui-prop');
     prop.setAttribute('type', 'dump');
-    // 克隆 dump 并应用自定义元数据
     const dumpCopy = Object.assign({}, propDump);
-    // 应用标签: 优先 labelText，否则用 toDisplayName 转大驼峰
-    if (taowuMeta?.labelText) {
+    if (taowuMeta?.labelText)
         dumpCopy.displayName = taowuMeta.labelText;
-    }
     else {
         const baseName = propDump.name || propName;
         dumpCopy.displayName = toDisplayName(baseName);
     }
-    if (taowuMeta?.readOnly) {
+    if (taowuMeta?.readOnly)
         dumpCopy.readonly = true;
-    }
     if (taowuMeta?.range) {
         dumpCopy.slide = true;
         dumpCopy.min = taowuMeta.range.min;
         dumpCopy.max = taowuMeta.range.max;
     }
-    if (taowuMeta?.textarea) {
+    if (taowuMeta?.textarea)
         dumpCopy.multiline = true;
-    }
     try {
         prop.dump = dumpCopy;
     }
     catch (e) { }
     return prop;
 }
-// ─── ValueDropdown 渲染 ───
+function createJsonAssetElement(propDump, taowuMeta, compUuid, compIndex, propName) {
+    const prop = document.createElement('ui-prop');
+    prop.setAttribute('type', 'dump');
+    const dumpCopy = Object.assign({}, propDump);
+    dumpCopy.displayName = taowuMeta?.labelText || toDisplayName(propDump.name || propName);
+    if (taowuMeta?.readOnly)
+        dumpCopy.readonly = true;
+    try {
+        prop.dump = dumpCopy;
+    }
+    catch (e) { }
+    return prop;
+}
 function createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering) {
     const vd = taowuMeta.valueDropdown;
     const propPath = buildPath(propDump, compIndex, propName);
     const isNumber = (propDump.type || '').toLowerCase() === 'number';
-    // 使用 ui-prop[type="dump"] + enumList 让 Cocos 原生渲染 label + select
     const prop = document.createElement('ui-prop');
     prop.setAttribute('type', 'dump');
     prop.setAttribute('data-value-dropdown', '');
     const dumpCopy = Object.assign({}, propDump);
-    const labelText = taowuMeta.labelText || propDump.displayName || toDisplayName(propName);
-    dumpCopy.displayName = labelText;
+    dumpCopy.displayName = taowuMeta.labelText || toDisplayName(propDump.name || propName);
     if (taowuMeta.readOnly)
         dumpCopy.readonly = true;
     try {
@@ -280,25 +307,18 @@ function createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, pr
     }
     catch (e) { }
     function applyEnumList(values, labels) {
-        dumpCopy.enumList = values.map((v, i) => ({
-            value: v,
-            name: labels && labels[i] ? labels[i] : String(v),
-        }));
+        dumpCopy.enumList = values.map((v, i) => ({ value: v, name: labels && labels[i] ? labels[i] : String(v) }));
         dumpCopy.value = isNumber ? Number(propDump.value) : propDump.value;
-        // Cocos 需要 type 为 "Enum" 才会渲染 ui-select
         dumpCopy.type = 'Enum';
         try {
             prop.dump = dumpCopy;
         }
         catch (e) { }
-        requestAnimationFrame(() => {
-            try {
-                prop.render(dumpCopy);
-            }
-            catch (e) { }
-            if (taowuMeta.readOnly)
-                prop.setAttribute('disabled', '');
-        });
+        requestAnimationFrame(() => { try {
+            prop.render(dumpCopy);
+        }
+        catch (e) { } if (taowuMeta.readOnly)
+            prop.setAttribute('disabled', ''); });
     }
     function setupEnumChange() {
         prop.addEventListener('confirm', async (e) => {
@@ -308,10 +328,7 @@ function createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, pr
                 return;
             const typedVal = isNumber ? Number(newVal) : newVal;
             propDump.value = typedVal;
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: propPath,
-                dump: { type: propDump.type, value: typedVal },
-            });
+            await safeSetProperty(compUuid, propPath, { type: propDump.type, value: typedVal });
         });
     }
     if (vd.values) {
@@ -319,36 +336,51 @@ function createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, pr
         setupEnumChange();
     }
     else if (vd.memberName) {
-        // 先用空 enumList render 占位
         applyEnumList([], []);
         setupEnumChange();
-        Editor.Message.request('taowu-inspector', 'resolve-value-dropdown', compUuid, compIndex, vd.memberName)
-            .then((result) => {
-            let values = [];
-            let labels;
-            if (Array.isArray(result)) {
-                if (result.length > 0 && typeof result[0] === 'object' && result[0].value !== undefined) {
-                    values = result.map((r) => r.value);
-                    labels = result.map((r) => r.label || String(r.value));
+        // json-edit 模式: 通过类名解析 (无组件实例)
+        if (compUuid === 'json-edit') {
+            // 优先用 propDump._ownerType (嵌套对象所属类)，否则用根类型名
+            const className = propDump._ownerType || propDump._t || (propDump.type && !['Number', 'String', 'Boolean'].includes(propDump.type) ? propDump.type : '') || json_asset_renderer_1.jsonState.rootTypeName || '';
+            Editor.Message.request('taowu-inspector', 'resolve-value-dropdown-by-class', className, vd.memberName)
+                .then((result) => {
+                let values = [];
+                let labels;
+                if (Array.isArray(result)) {
+                    if (result.length > 0 && typeof result[0] === 'object' && result[0].value !== undefined) {
+                        values = result.map((r) => r.value);
+                        labels = result.map((r) => r.label || String(r.value));
+                    }
+                    else {
+                        values = result;
+                    }
                 }
-                else {
-                    values = result;
+                applyEnumList(values, labels || vd.labels);
+            }).catch(() => { applyEnumList([], []); });
+        }
+        else {
+            Editor.Message.request('taowu-inspector', 'resolve-value-dropdown', compUuid, compIndex, vd.memberName)
+                .then((result) => {
+                let values = [];
+                let labels;
+                if (Array.isArray(result)) {
+                    if (result.length > 0 && typeof result[0] === 'object' && result[0].value !== undefined) {
+                        values = result.map((r) => r.value);
+                        labels = result.map((r) => r.label || String(r.value));
+                    }
+                    else {
+                        values = result;
+                    }
                 }
-            }
-            const finalLabels = labels || vd.labels;
-            applyEnumList(values, finalLabels);
-        })
-            .catch(() => {
-            applyEnumList([], []);
-        });
+                applyEnumList(values, labels || vd.labels);
+            }).catch(() => { applyEnumList([], []); });
+        }
     }
     return prop;
 }
-/** 创建原始输入元素 (用于 List/TableList/Map 内部，不使用 ui-prop) */
 function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
     const type = (propDump.type || '').toLowerCase();
     const value = propDump.value;
-    // ValueDropdown
     if (taowuMeta?.valueDropdown) {
         const vd = taowuMeta.valueDropdown;
         const isNumber = type === 'number';
@@ -363,13 +395,32 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
             }
             select.value = String(value);
         }
-        if (vd.values) {
+        if (vd.values)
             fillSelect(vd.values, vd.labels);
-        }
         else if (vd.memberName) {
-            // 异步获取选项
             fillSelect([], []);
-            if (compUuid && compIndex !== undefined) {
+            if (compUuid === 'json-edit') {
+                const className = propDump._ownerType || propDump._t || (propDump.type && !['Number', 'String', 'Boolean'].includes(propDump.type) ? propDump.type : '') || json_asset_renderer_1.jsonState.rootTypeName || '';
+                Editor.Message.request('taowu-inspector', 'resolve-value-dropdown-by-class', className, vd.memberName)
+                    .then((result) => {
+                    let values = [];
+                    let labels;
+                    if (Array.isArray(result)) {
+                        if (result.length > 0 && typeof result[0] === 'object' && result[0].value !== undefined) {
+                            values = result.map((r) => r.value);
+                            labels = result.map((r) => r.label || String(r.value));
+                        }
+                        else {
+                            values = result;
+                        }
+                    }
+                    const finalLabels = labels || vd.labels;
+                    while (select.firstChild)
+                        select.removeChild(select.firstChild);
+                    fillSelect(values, finalLabels);
+                }).catch(() => { });
+            }
+            else if (compUuid && compIndex !== undefined) {
                 Editor.Message.request('taowu-inspector', 'resolve-value-dropdown', compUuid, compIndex, vd.memberName)
                     .then((result) => {
                     let values = [];
@@ -387,8 +438,7 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
                     while (select.firstChild)
                         select.removeChild(select.firstChild);
                     fillSelect(values, finalLabels);
-                })
-                    .catch(() => { });
+                }).catch(() => { });
             }
         }
         if (taowuMeta.readOnly)
@@ -401,7 +451,6 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
         });
         return select;
     }
-    // Enum
     if (propDump.enumList && propDump.enumList.length > 0) {
         const select = document.createElement('ui-select');
         for (const item of propDump.enumList) {
@@ -413,14 +462,12 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
         select.value = String(value);
         return select;
     }
-    // Boolean
     if (type === 'boolean') {
         const checkbox = document.createElement('ui-checkbox');
         if (value)
             checkbox.setAttribute('checked', '');
         return checkbox;
     }
-    // Number
     if (type === 'number') {
         const numInput = document.createElement('ui-num-input');
         try {
@@ -429,7 +476,6 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
         catch (e) { }
         return numInput;
     }
-    // String
     if (type === 'string') {
         const input = document.createElement('ui-input');
         try {
@@ -438,7 +484,68 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
         catch (e) { }
         return input;
     }
-    // Fallback
+    // Cocos 基础类型 (兼容 cc.Vec3 / Vec3 / vec3 等写法)
+    const cocosType = type.startsWith('cc.') ? type : 'cc.' + type;
+    if (cocosType === 'cc.vec3' && value) {
+        const el = document.createElement('ui-vec3');
+        const _v = value.value || value;
+        const _setVal = () => { try {
+            el.value = { x: _v.x, y: _v.y, z: _v.z };
+        }
+        catch (e) { } };
+        _setVal();
+        el.addEventListener('attached-to-dom', _setVal);
+        requestAnimationFrame(() => _setVal());
+        return el;
+    }
+    if (cocosType === 'cc.vec2' && value) {
+        const el = document.createElement('ui-vec2');
+        const _v = value.value || value;
+        const _setVal = () => { try {
+            el.value = { x: _v.x, y: _v.y };
+        }
+        catch (e) { } };
+        _setVal();
+        el.addEventListener('attached-to-dom', _setVal);
+        requestAnimationFrame(() => _setVal());
+        return el;
+    }
+    if (cocosType === 'cc.vec4' && value) {
+        const el = document.createElement('ui-vec4');
+        const _v = value.value || value;
+        const _setVal = () => { try {
+            el.value = { x: _v.x, y: _v.y, z: _v.z, w: _v.w || 0 };
+        }
+        catch (e) { } };
+        _setVal();
+        el.addEventListener('attached-to-dom', _setVal);
+        requestAnimationFrame(() => _setVal());
+        return el;
+    }
+    if (cocosType === 'cc.color' && value) {
+        const el = document.createElement('ui-color');
+        const _v = value.value || value;
+        const _setVal = () => { try {
+            el.value = { r: _v.r, g: _v.g, b: _v.b, a: _v.a != null ? _v.a : 255 };
+        }
+        catch (e) { } };
+        _setVal();
+        el.addEventListener('attached-to-dom', _setVal);
+        requestAnimationFrame(() => _setVal());
+        return el;
+    }
+    if (cocosType === 'cc.size' && value) {
+        const el = document.createElement('ui-size');
+        const _v = value.value || value;
+        const _setVal = () => { try {
+            el.value = { width: _v.width, height: _v.height };
+        }
+        catch (e) { } };
+        _setVal();
+        el.addEventListener('attached-to-dom', _setVal);
+        requestAnimationFrame(() => _setVal());
+        return el;
+    }
     const input = document.createElement('ui-input');
     try {
         input.value = typeof value === 'string' ? value : (value != null ? JSON.stringify(value) : '');
@@ -446,1210 +553,16 @@ function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
     catch (e) { }
     return input;
 }
-// ─── 多数值输入 (Vec2/Vec3/Vec4/Color/Size 等) ───
-function createMultiNumberInput(value, keys, propDump, taowuMeta, compUuid, compIndex, propName, isRendering) {
-    const container = document.createElement('div');
-    container.className = 'taowu-multi-num';
-    container.style.display = 'flex';
-    container.style.gap = '4px';
-    container.style.width = '100%';
-    container.dataset.multiKeys = keys.join(',');
-    const valObj = (typeof value === 'object' && value !== null) ? value : {};
-    for (const k of keys) {
-        const field = document.createElement('div');
-        field.style.flex = '1';
-        const numInput = document.createElement('ui-num-input');
-        numInput.setAttribute('placeholder', k);
-        try {
-            numInput.value = valObj[k] != null ? valObj[k] : 0;
-        }
-        catch (e) { }
-        field.appendChild(numInput);
-        container.appendChild(numInput);
-    }
-    // 监听变化: 整体写入
-    container.addEventListener('change', async (e) => {
-        if (isRendering && isRendering())
-            return;
-        const target = e.target;
-        if (target.tagName.toLowerCase() !== 'ui-num-input')
-            return;
-        const inputs = container.querySelectorAll('ui-num-input');
-        const newVal = {};
-        inputs.forEach((inp, idx) => {
-            newVal[keys[idx]] = Number(inp.value);
-        });
-        const propPath = buildPath(propDump, compIndex, propName);
-        const result = await Editor.Message.request('scene', 'set-property', {
-            uuid: compUuid,
-            path: propPath,
-            dump: { type: propDump.type, value: newVal },
-        });
-        if (result) {
-            propDump.value = newVal;
-        }
-    });
-    return container;
-}
-// ─── List 渲染 (默认数组, Box 风格) ───
-function createListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata) {
-    const basePath = buildPath(propDump, compIndex, propName);
-    // Cocos dump 中数组 value 是 IProperty[] 或原始值[]
-    // 统一解包为原始值数组
-    const rawItems = Array.isArray(propDump.value) ? propDump.value : [];
-    // 解包 IProperty: 统一检测有 value + (type/default/name/path) 的对象
-    const items = rawItems.map((item) => {
-        if (!item || typeof item !== 'object')
-            return item;
-        if (item.value !== undefined) {
-            const isIProp = item.type !== undefined || item.default !== undefined
-                || item.name !== undefined || item.path !== undefined;
-            if (isIProp) {
-                return item.value;
-            }
-        }
-        return item;
-    });
-    const elementTypeData = propDump.elementTypeData || { type: 'Number', value: 0 };
-    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`);
-    const itemsContainer = document.createElement('div');
-    itemsContainer.className = 'taowu-collection-items';
-    content.appendChild(itemsContainer);
-    function renderItems() {
-        itemsContainer.innerHTML = '';
-        for (let i = 0; i < items.length; i++) {
-            const itemValue = items[i];
-            // 检测是否为 Cocos 内置类型 (Vec3/Color/Size 等)，这些应该走简单行渲染
-            const _isCocosType = (() => {
-                if (typeof itemValue !== 'object' || itemValue === null || Array.isArray(itemValue))
-                    return false;
-                // IProperty 包装: {value: {x:1,y:1,z:1}, type: "cc.Vec3"}
-                if (itemValue.type !== undefined && typeof itemValue.value === 'object' && itemValue.value !== null) {
-                    const t = itemValue.type;
-                    return t === 'cc.Vec3' || t === 'cc.Vec2' || t === 'cc.Vec4' || t === 'cc.Color' || t === 'cc.Size' || t === 'cc.Quat';
-                }
-                // 解包后: {x:1, y:1, z:1}
-                const keys = Object.keys(itemValue);
-                const hasXYZ = keys.includes('x') && keys.includes('y');
-                const hasRGB = keys.includes('r') && keys.includes('g') && keys.includes('b');
-                const hasWH = keys.includes('width') && keys.includes('height');
-                return hasXYZ || hasRGB || hasWH;
-            })();
-            const isObj = typeof itemValue === 'object' && itemValue !== null && !Array.isArray(itemValue) && !_isCocosType;
-            if (isObj) {
-                // 对象元素: 删除按钮 + 可折叠 ui-section (同级)
-                const wrapper = document.createElement('div');
-                wrapper.className = 'taowu-collection-item-wrapper';
-                const _elemTypeName = propDump.elementTypeData?.type;
-                const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
-                const delBtn = createDelButton('×');
-                delBtn.addEventListener('click', async (ev) => {
-                    ev.stopPropagation();
-                    items.splice(i, 1);
-                    await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
-                    propDump.value = [...items];
-                    updateHeader();
-                    renderItems();
-                    if (taowuMeta?.onCollectionChanged)
-                        await triggerCallbacks(compUuid, compIndex, propName);
-                });
-                wrapper.appendChild(delBtn);
-                const itemBox = document.createElement('ui-section');
-                itemBox.className = 'taowu-collection-item-box';
-                itemBox.setAttribute('header', `${_elemTypeName || 'Element'} ${i}`);
-                const itemContent = document.createElement('div');
-                itemContent.className = 'taowu-collection-item-content';
-                const stop = (e) => e.stopPropagation();
-                itemContent.addEventListener('click', stop);
-                itemContent.addEventListener('mousedown', stop);
-                itemContent.addEventListener('pointerdown', stop);
-                itemContent.addEventListener('change', stop);
-                itemContent.addEventListener('confirm', stop);
-                const unwrapped = (itemValue.value !== undefined && itemValue.type !== undefined && typeof itemValue.value === 'object')
-                    ? itemValue.value : itemValue;
-                const keys = Object.keys(unwrapped);
-                for (const subKey of keys) {
-                    const subRow = document.createElement('div');
-                    subRow.className = 'taowu-collection-row';
-                    const subLabel = document.createElement('span');
-                    subLabel.className = 'taowu-collection-label';
-                    subLabel.textContent = _elemMeta[subKey]?.labelText || toDisplayName(subKey);
-                    subRow.appendChild(subLabel);
-                    const subField = document.createElement('div');
-                    subField.className = 'taowu-collection-field';
-                    let subVal = unwrapped[subKey];
-                    let subType = 'String';
-                    let subPath = `${basePath}.${i}.${subKey}`;
-                    let rawSubDump = null;
-                    if (subVal && typeof subVal === 'object' && subVal.value !== undefined && subVal.type !== undefined) {
-                        subType = subVal.type;
-                        subVal = subVal.value;
-                        rawSubDump = unwrapped[subKey];
-                        if (rawSubDump && rawSubDump.path) {
-                            subPath = rawSubDump.path;
-                        }
-                    }
-                    else {
-                        subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
-                    }
-                    const subDump = { value: subVal, type: subType };
-                    const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
-                    const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
-                    subField.appendChild(subInput);
-                    const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
-                    if (isSubInput) {
-                        subInput.addEventListener('confirm', async (e) => {
-                            e.stopPropagation();
-                            const newVal = getInputValue(subInput, subDump);
-                            unwrapped[subKey] = newVal;
-                            items[i] = { ...unwrapped };
-                            const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                            await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
-                            if (taowuMeta?.onCollectionChanged)
-                                await triggerCallbacks(compUuid, compIndex, propName);
-                        });
-                    }
-                    else {
-                        subInput.addEventListener('change', async () => {
-                            if (isRendering && isRendering())
-                                return;
-                            const newVal = getInputValue(subInput, subDump);
-                            unwrapped[subKey] = newVal;
-                            items[i] = { ...unwrapped };
-                            const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                            await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
-                            if (taowuMeta?.onCollectionChanged)
-                                await triggerCallbacks(compUuid, compIndex, propName);
-                        });
-                    }
-                    subRow.appendChild(subField);
-                    itemContent.appendChild(subRow);
-                }
-                itemBox.appendChild(itemContent);
-                wrapper.appendChild(itemBox);
-                itemsContainer.appendChild(wrapper);
-            }
-            else {
-                // 简单类型 / Cocos 类型元素: 序号 + 内容 + 删除 (单行)
-                const itemRow = document.createElement('div');
-                itemRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin:1px 0;width:100%;';
-                const indexLabel = document.createElement('span');
-                indexLabel.style.cssText = 'flex:0 0 20px;font-size:11px;color:#888;text-align:center;';
-                indexLabel.textContent = String(i);
-                itemRow.appendChild(indexLabel);
-                const itemContent = document.createElement('div');
-                itemContent.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;';
-                const _useRaw = !_isCocosType;
-                let itemDump, itemPath;
-                if (_isCocosType) {
-                    // Cocos 类型: 使用原始 rawItems[i] 保留子属性 path，补上 type 和 displayName
-                    const rawItem = rawItems[i];
-                    itemDump = Object.assign({}, rawItem, { type: elementTypeData.type || 'cc.Vec3', displayName: '', name: '' });
-                    itemPath = (rawItem && rawItem.path) ? rawItem.path : `${basePath}.${i}`;
-                }
-                else {
-                    const itemType = elementTypeData.type || (typeof items[i] === 'number' ? 'Number' : 'String');
-                    itemDump = { value: items[i], type: itemType };
-                    itemPath = `${basePath}.${i}`;
-                }
-                const itemInput = createInputElement(itemDump, taowuMeta, compUuid, compIndex, propName, isRendering, _useRaw);
-                itemContent.appendChild(itemInput);
-                const _itemType = itemDump.type;
-                if (itemInput.tagName.toLowerCase() === 'ui-prop') {
-                    requestAnimationFrame(() => {
-                        try {
-                            itemInput.dump = itemDump;
-                        }
-                        catch (e) { }
-                        try {
-                            itemInput.render(itemDump);
-                        }
-                        catch (e) { }
-                    });
-                    itemInput.addEventListener('change-dump', async () => {
-                        if (isRendering && isRendering())
-                            return;
-                        const newDump = itemInput.dump;
-                        if (!newDump)
-                            return;
-                        items[i] = newDump.value;
-                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: newDump });
-                        propDump.value[i] = newDump.value;
-                        if (taowuMeta?.onCollectionChanged)
-                            await triggerCallbacks(compUuid, compIndex, propName);
-                    });
-                }
-                else {
-                    itemInput.addEventListener('change', async () => {
-                        if (isRendering && isRendering())
-                            return;
-                        const newVal = getInputValue(itemInput, itemDump);
-                        items[i] = newVal;
-                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: { type: _itemType, value: newVal } });
-                        propDump.value[i] = newVal;
-                        if (taowuMeta?.onCollectionChanged)
-                            await triggerCallbacks(compUuid, compIndex, propName);
-                    });
-                }
-                itemRow.appendChild(itemContent);
-                // 删除按钮: 固定宽度，不被挤压
-                const delBtn = document.createElement('span');
-                delBtn.textContent = '×';
-                delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;';
-                delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f77'; });
-                delBtn.addEventListener('mouseleave', () => { delBtn.style.color = '#c55'; });
-                delBtn.addEventListener('click', async () => {
-                    items.splice(i, 1);
-                    await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
-                    propDump.value = [...items];
-                    updateHeader();
-                    renderItems();
-                    if (taowuMeta?.onCollectionChanged)
-                        await triggerCallbacks(compUuid, compIndex, propName);
-                });
-                itemRow.appendChild(delBtn);
-                itemsContainer.appendChild(itemRow);
-            }
-        }
-    }
-    function updateHeader() {
-        container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`);
-    }
-    renderItems();
-    const addBtn = createAddButton('+ 添加');
-    addBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const defaultVal = elementTypeData.value != null ? elementTypeData.value : 0;
-        const newIdx = items.length;
-        await Editor.Message.request('scene', 'set-property', {
-            uuid: compUuid, path: `${basePath}.length`,
-            dump: { value: newIdx + 1 },
-        });
-        await Editor.Message.request('scene', 'set-property', {
-            uuid: compUuid, path: `${basePath}.${newIdx}`,
-            dump: { type: elementTypeData.type, value: defaultVal },
-        });
-        items.push(defaultVal);
-        updateHeader();
-        renderItems();
-        if (taowuMeta?.onCollectionChanged)
-            await triggerCallbacks(compUuid, compIndex, propName);
-    });
-    content.appendChild(addBtn);
-    return container;
-}
-// ─── TableList 渲染 (可折叠表格列表, Box 风格) ───
-function createTableListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata) {
-    const basePath = buildPath(propDump, compIndex, propName);
-    // 解包 IProperty[] 为原始值[]
-    let rawItems = [];
-    if (Array.isArray(propDump.value)) {
-        rawItems = propDump.value;
-    }
-    else if (propDump.value && typeof propDump.value === 'object') {
-        // 有些 dump 格式中数组值可能是对象 {0: ..., 1: ..., length: 3}
-        const valObj = propDump.value;
-        if (valObj.length != null) {
-            for (let k = 0; k < valObj.length; k++) {
-                rawItems.push(valObj[k]);
-            }
-        }
-    }
-    const items = rawItems.map((item) => {
-        if (!item || typeof item !== 'object')
-            return item;
-        // 检测 IProperty 包装: 有 value 字段且有 type/default/name/path 之一
-        if (item.value !== undefined) {
-            const isIProp = item.type !== undefined || item.default !== undefined
-                || item.name !== undefined || item.path !== undefined;
-            if (isIProp && typeof item.value === 'object' && item.value !== null) {
-                return item.value;
-            }
-            // value 是原始值 (Number/String/Boolean)
-            if (isIProp) {
-                return item.value;
-            }
-        }
-        return item;
-    });
-    const elementTypeData = propDump.elementTypeData;
-    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`);
-    const itemsContainer = document.createElement('div');
-    itemsContainer.className = 'taowu-collection-items';
-    content.appendChild(itemsContainer);
-    function renderItems() {
-        itemsContainer.innerHTML = '';
-        // 表头行
-        if (items.length > 0) {
-            const firstItem = items[0];
-            if (typeof firstItem === 'object' && firstItem !== null && !Array.isArray(firstItem)) {
-                const firstUnwrapped = (firstItem.value !== undefined && firstItem.type !== undefined && typeof firstItem.value === 'object')
-                    ? firstItem.value : firstItem;
-                const firstKeys = Object.keys(firstUnwrapped);
-                const firstIsCocos = (firstKeys.includes('x') && firstKeys.includes('y')) || firstKeys.includes('r') || firstKeys.includes('width');
-                if (!firstIsCocos) {
-                    const headerRow = document.createElement('div');
-                    headerRow.className = 'taowu-table-row taowu-table-header';
-                    const headerIndex = document.createElement('span');
-                    headerIndex.className = 'taowu-table-index';
-                    headerIndex.textContent = '#';
-                    headerRow.appendChild(headerIndex);
-                    const elemTypeName = propDump.elementTypeData?.type;
-                    const elemMeta = (elemTypeName && elementMetadata && elementMetadata[elemTypeName]) || {};
-                    for (const key of firstKeys) {
-                        const cell = document.createElement('div');
-                        cell.className = 'taowu-table-cell';
-                        cell.textContent = elemMeta[key]?.labelText || toDisplayName(key);
-                        headerRow.appendChild(cell);
-                    }
-                    const spacer = document.createElement('span');
-                    spacer.className = 'taowu-table-index';
-                    spacer.textContent = '';
-                    headerRow.appendChild(spacer);
-                    itemsContainer.appendChild(headerRow);
-                }
-            }
-        }
-        for (let i = 0; i < items.length; i++) {
-            // 普通对象 (MapEntry 等) 使用表格行风格
-            const _itemValue = items[i];
-            if (typeof _itemValue === 'object' && _itemValue !== null && !Array.isArray(_itemValue)) {
-                const _unwrapped = (_itemValue.value !== undefined && _itemValue.type !== undefined && typeof _itemValue.value === 'object')
-                    ? _itemValue.value : _itemValue;
-                const _keys = Object.keys(_unwrapped);
-                const _isCocos = (_keys.includes('x') && _keys.includes('y')) || _keys.includes('r') || _keys.includes('width');
-                const _elemTypeName = propDump.elementTypeData?.type;
-                const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
-                if (!_isCocos) {
-                    const tableRow = document.createElement('div');
-                    tableRow.className = 'taowu-table-row';
-                    const indexSpan = document.createElement('span');
-                    indexSpan.className = 'taowu-table-index';
-                    indexSpan.textContent = String(i);
-                    tableRow.appendChild(indexSpan);
-                    for (const subKey of _keys) {
-                        const cell = document.createElement('div');
-                        cell.className = 'taowu-table-cell';
-                        let subVal = _unwrapped[subKey];
-                        let subType = 'String';
-                        let subPath = `${basePath}.${i}.${subKey}`;
-                        let rawSubDump = null;
-                        if (subVal && typeof subVal === 'object' && subVal.value !== undefined && subVal.type !== undefined) {
-                            subType = subVal.type;
-                            subVal = subVal.value;
-                            rawSubDump = _unwrapped[subKey];
-                            if (rawSubDump && rawSubDump.path) {
-                                subPath = rawSubDump.path;
-                            }
-                        }
-                        else {
-                            subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
-                        }
-                        const subDump = { value: subVal, type: subType };
-                        const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
-                        const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
-                        cell.appendChild(subInput);
-                        const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
-                        if (isSubInput) {
-                            subInput.addEventListener('confirm', async (e) => {
-                                e.stopPropagation();
-                                const newVal = getInputValue(subInput, subDump);
-                                _unwrapped[subKey] = newVal;
-                                const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
-                            });
-                        }
-                        else {
-                            subInput.addEventListener('change', async () => {
-                                if (isRendering && isRendering())
-                                    return;
-                                const newVal = getInputValue(subInput, subDump);
-                                _unwrapped[subKey] = newVal;
-                                const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
-                            });
-                        }
-                        tableRow.appendChild(cell);
-                    }
-                    const tblDelBtn = createDelButton('×');
-                    tblDelBtn.addEventListener('click', async () => {
-                        items.splice(i, 1);
-                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
-                        for (let j = 0; j < items.length; j++) {
-                            const v = items[j];
-                            if (typeof v === 'object' && v !== null) {
-                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.${j}`, dump: { type: propDump.elementTypeData?.type || 'Object', value: JSON.parse(JSON.stringify(v)) } });
-                            }
-                            else {
-                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.${j}`, dump: { type: typeof v === 'number' ? 'Number' : 'String', value: v } });
-                            }
-                        }
-                        propDump.value = [...items];
-                        updateHeader();
-                        renderItems();
-                    });
-                    tableRow.appendChild(tblDelBtn);
-                    itemsContainer.appendChild(tableRow);
-                    continue;
-                }
-                // Cocos 类型 (Vec3/Color/Size 等): 表格行风格 # - ui-prop - ×
-                if (_isCocos) {
-                    const tableRow = document.createElement('div');
-                    tableRow.className = 'taowu-table-row';
-                    const indexSpan = document.createElement('span');
-                    indexSpan.className = 'taowu-table-index';
-                    indexSpan.textContent = String(i);
-                    tableRow.appendChild(indexSpan);
-                    const cell = document.createElement('div');
-                    cell.className = 'taowu-table-cell';
-                    // 使用原始 rawItems[i] 保留子属性 path
-                    const rawItem = rawItems[i];
-                    const itemDump = Object.assign({}, rawItem, { type: propDump.elementTypeData?.type || 'cc.Vec3', displayName: '', name: '' });
-                    const itemPath = (rawItem && rawItem.path) ? rawItem.path : `${basePath}.${i}`;
-                    const prop = document.createElement('ui-prop');
-                    prop.setAttribute('type', 'dump');
-                    try {
-                        prop.dump = itemDump;
-                    }
-                    catch (e) { }
-                    cell.appendChild(prop);
-                    requestAnimationFrame(() => {
-                        try {
-                            prop.dump = itemDump;
-                        }
-                        catch (e) { }
-                        try {
-                            prop.render(itemDump);
-                        }
-                        catch (e) { }
-                    });
-                    prop.addEventListener('change-dump', async () => {
-                        if (isRendering && isRendering())
-                            return;
-                        const newDump = prop.dump;
-                        if (!newDump)
-                            return;
-                        items[i] = newDump.value;
-                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: itemPath, dump: newDump });
-                        propDump.value[i] = newDump.value;
-                        if (taowuMeta?.onCollectionChanged)
-                            await triggerCallbacks(compUuid, compIndex, propName);
-                    });
-                    tableRow.appendChild(cell);
-                    const tblDelBtn = document.createElement('span');
-                    tblDelBtn.textContent = '×';
-                    tblDelBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;overflow:visible;';
-                    tblDelBtn.addEventListener('mouseenter', () => { tblDelBtn.style.color = '#f77'; });
-                    tblDelBtn.addEventListener('mouseleave', () => { tblDelBtn.style.color = '#c55'; });
-                    tblDelBtn.addEventListener('click', async () => {
-                        items.splice(i, 1);
-                        await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.length`, dump: { value: items.length } });
-                        for (let j = 0; j < items.length; j++) {
-                            const v = items[j];
-                            if (typeof v === 'object' && v !== null) {
-                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.${j}`, dump: { type: propDump.elementTypeData?.type || 'Object', value: JSON.parse(JSON.stringify(v)) } });
-                            }
-                            else {
-                                await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: `${basePath}.${j}`, dump: { type: typeof v === 'number' ? 'Number' : 'String', value: v } });
-                            }
-                        }
-                        propDump.value = [...items];
-                        updateHeader();
-                        renderItems();
-                    });
-                    tableRow.appendChild(tblDelBtn);
-                    itemsContainer.appendChild(tableRow);
-                    continue;
-                }
-            }
-            const itemBox = document.createElement('div');
-            itemBox.className = 'taowu-collection-item-box';
-            const itemHeader = document.createElement('div');
-            itemHeader.className = 'taowu-collection-item-header';
-            itemHeader.textContent = `Element ${i}`;
-            const delBtn = createDelButton('×');
-            delBtn.addEventListener('click', async () => {
-                const removed = items.splice(i, 1);
-                // 重建整个数组: 先设长度，再逐个设置元素
-                await Editor.Message.request('scene', 'set-property', {
-                    uuid: compUuid, path: `${basePath}.length`,
-                    dump: { value: items.length },
-                });
-                for (let j = 0; j < items.length; j++) {
-                    const v = items[j];
-                    if (typeof v === 'object' && v !== null) {
-                        await Editor.Message.request('scene', 'set-property', {
-                            uuid: compUuid, path: `${basePath}.${j}`,
-                            dump: { type: propDump.elementTypeData?.type || 'Object', value: JSON.parse(JSON.stringify(v)) },
-                        });
-                    }
-                    else {
-                        await Editor.Message.request('scene', 'set-property', {
-                            uuid: compUuid, path: `${basePath}.${j}`,
-                            dump: { type: typeof v === 'number' ? 'Number' : 'String', value: v },
-                        });
-                    }
-                }
-                propDump.value = [...items];
-                updateHeader();
-                renderItems();
-            });
-            itemHeader.appendChild(delBtn);
-            itemBox.appendChild(itemHeader);
-            const itemContent = document.createElement('div');
-            itemContent.className = 'taowu-collection-item-content';
-            const itemValue = items[i];
-            const isObject = typeof itemValue === 'object' && itemValue !== null && !Array.isArray(itemValue);
-            if (isObject) {
-                // 解包 IProperty 包装: { value: {...}, type: "cc.Vec3" } → 取 value
-                const unwrapped = (itemValue.value !== undefined && itemValue.type !== undefined && typeof itemValue.value === 'object')
-                    ? itemValue.value : itemValue;
-                const keys = Object.keys(unwrapped);
-                const isVec2 = keys.includes('x') && keys.includes('y') && !keys.includes('z');
-                const isVec3 = keys.includes('x') && keys.includes('y') && keys.includes('z') && !keys.includes('w');
-                const isVec4 = keys.includes('x') && keys.includes('y') && keys.includes('z') && keys.includes('w');
-                const isColor = keys.includes('r') && keys.includes('g') && keys.includes('b');
-                const isSize = keys.includes('width') && keys.includes('height');
-                if (isVec2 || isVec3 || isVec4 || isColor || isSize) {
-                    let itemType = 'cc.Vec3';
-                    if (isVec2)
-                        itemType = 'cc.Vec2';
-                    else if (isVec3)
-                        itemType = 'cc.Vec3';
-                    else if (isVec4)
-                        itemType = 'cc.Vec4';
-                    else if (isColor)
-                        itemType = 'cc.Color';
-                    else if (isSize)
-                        itemType = 'cc.Size';
-                    // 使用 ui-prop + dump 渲染，与 Cocos 原生 Inspector 一致
-                    const prop = document.createElement('ui-prop');
-                    prop.setAttribute('type', 'dump');
-                    const itemDump = {
-                        value: unwrapped,
-                        type: itemType,
-                        path: `${basePath}.${i}`,
-                    };
-                    try {
-                        prop.dump = itemDump;
-                    }
-                    catch (e) { }
-                    // 挂载后再 render
-                    itemContent.appendChild(prop);
-                    try {
-                        prop.render(itemDump);
-                    }
-                    catch (e) { }
-                    try {
-                        prop.dump = itemDump;
-                    }
-                    catch (e) { }
-                    prop.addEventListener('change-dump', async () => {
-                        if (isRendering && isRendering())
-                            return;
-                        const newVal = prop.dump ? prop.dump.value : undefined;
-                        if (newVal === undefined)
-                            return;
-                        items[i] = newVal;
-                        await Editor.Message.request('scene', 'set-property', {
-                            uuid: compUuid, path: `${basePath}.${i}`,
-                            dump: { type: itemType, value: newVal },
-                        });
-                        propDump.value[i] = newVal;
-                        if (taowuMeta?.onCollectionChanged)
-                            await triggerCallbacks(compUuid, compIndex, propName);
-                    });
-                }
-                else {
-                    // 普通对象: 渲染每个子属性
-                    const _elemTypeName = propDump.elementTypeData?.type;
-                    const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
-                    for (const subKey of keys) {
-                        const subRow = document.createElement('div');
-                        subRow.className = 'taowu-collection-row';
-                        const subLabel = document.createElement('span');
-                        subLabel.className = 'taowu-collection-label';
-                        subLabel.textContent = _elemMeta[subKey]?.labelText || toDisplayName(subKey);
-                        subRow.appendChild(subLabel);
-                        const subField = document.createElement('div');
-                        subField.className = 'taowu-collection-field';
-                        // 解包子属性 IProperty
-                        let subVal = unwrapped[subKey];
-                        let subType = 'String';
-                        let subPath = `${basePath}.${i}.${subKey}`;
-                        let rawSubDump = null;
-                        if (subVal && typeof subVal === 'object' && subVal.value !== undefined && subVal.type !== undefined) {
-                            subType = subVal.type;
-                            subVal = subVal.value;
-                            rawSubDump = unwrapped[subKey];
-                            // 使用 dump 中的原始 path，不做格式转换
-                            if (rawSubDump && rawSubDump.path) {
-                                subPath = rawSubDump.path;
-                            }
-                        }
-                        else {
-                            subType = typeof subVal === 'number' ? 'Number'
-                                : typeof subVal === 'boolean' ? 'Boolean' : 'String';
-                        }
-                        const subDump = { value: subVal, type: subType };
-                        const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
-                        const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
-                        subField.appendChild(subInput);
-                        const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
-                        if (isSubInput) {
-                            subInput.addEventListener('confirm', async (e) => {
-                                e.stopPropagation();
-                                const newVal = getInputValue(subInput, subDump);
-                                unwrapped[subKey] = newVal;
-                                const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                                await Editor.Message.request('scene', 'set-property', {
-                                    uuid: compUuid, path: subPath,
-                                    dump: setDump,
-                                });
-                            });
-                        }
-                        else {
-                            subInput.addEventListener('change', async () => {
-                                if (isRendering && isRendering())
-                                    return;
-                                const newVal = getInputValue(subInput, subDump);
-                                unwrapped[subKey] = newVal;
-                                const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
-                                await Editor.Message.request('scene', 'set-property', {
-                                    uuid: compUuid, path: subPath,
-                                    dump: setDump,
-                                });
-                            });
-                        }
-                        subRow.appendChild(subField);
-                        itemContent.appendChild(subRow);
-                    }
-                }
-            }
-            else {
-                // 简单类型 / Cocos 类型元素: 表格行风格 # - 内容 - ×
-                const tableRow = document.createElement('div');
-                tableRow.className = 'taowu-table-row';
-                const indexSpan = document.createElement('span');
-                indexSpan.className = 'taowu-table-index';
-                indexSpan.textContent = String(i);
-                tableRow.appendChild(indexSpan);
-                const cell = document.createElement('div');
-                cell.className = 'taowu-table-cell';
-                const itemDump = {
-                    value: itemValue,
-                    type: typeof itemValue === 'number' ? 'Number' : 'String',
-                };
-                const itemInput = createInputElement(itemDump, taowuMeta, compUuid, compIndex, propName, isRendering, true);
-                cell.appendChild(itemInput);
-                itemInput.addEventListener('change', async () => {
-                    if (isRendering && isRendering())
-                        return;
-                    const newVal = getInputValue(itemInput, itemDump);
-                    items[i] = newVal;
-                    await Editor.Message.request('scene', 'set-property', {
-                        uuid: compUuid, path: `${basePath}.${i}`,
-                        dump: { type: itemDump.type, value: newVal },
-                    });
-                    propDump.value[i] = newVal;
-                    if (taowuMeta?.onCollectionChanged)
-                        await triggerCallbacks(compUuid, compIndex, propName);
-                });
-                tableRow.appendChild(cell);
-                const tblDelBtn = createDelButton('×');
-                tblDelBtn.addEventListener('click', async () => {
-                    items.splice(i, 1);
-                    await Editor.Message.request('scene', 'set-property', {
-                        uuid: compUuid, path: `${basePath}.length`,
-                        dump: { value: items.length },
-                    });
-                    propDump.value = [...items];
-                    updateHeader();
-                    renderItems();
-                    if (taowuMeta?.onCollectionChanged)
-                        await triggerCallbacks(compUuid, compIndex, propName);
-                });
-                tableRow.appendChild(tblDelBtn);
-                itemsContainer.appendChild(tableRow);
-                continue;
-            }
-            itemBox.appendChild(itemContent);
-            itemsContainer.appendChild(itemBox);
-        }
-        // 数据行渲染完成后，同步表头列宽
-        const headerEl = itemsContainer.querySelector('.taowu-table-header');
-        if (headerEl)
-            syncColumnWidths(headerEl, itemsContainer);
-    }
-    function updateHeader() {
-        container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`);
-    }
-    renderItems();
-    const addBtn = createAddButton('+ 添加元素');
-    addBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const newIdx = items.length;
-        const template = items[0];
-        // 检测模板类型
-        let isCocosValue = false;
-        if (template && typeof template === 'object') {
-            const keys = Object.keys(template);
-            const hasXYZ = keys.includes('x') && keys.includes('y') && keys.includes('z');
-            const hasRGBA = keys.includes('r') && keys.includes('g') && keys.includes('b');
-            const hasWH = keys.includes('width') && keys.includes('height');
-            isCocosValue = hasXYZ || hasRGBA || hasWH;
-        }
-        if (isCocosValue) {
-            // Vec3/Vec4/Color/Size: 设置整个元素，不拆分子属性
-            let itemType = 'cc.Vec3';
-            let itemVal = template;
-            if (template.r !== undefined)
-                itemType = 'cc.Color';
-            else if (template.width !== undefined)
-                itemType = 'cc.Size';
-            else if (template.w !== undefined)
-                itemType = 'cc.Vec4';
-            // 先设置长度
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: `${basePath}.length`,
-                dump: { value: newIdx + 1 },
-            });
-            // 再设置整个元素值
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: `${basePath}.${newIdx}`,
-                dump: { type: itemType, value: JSON.parse(JSON.stringify(template)) },
-            });
-        }
-        else if (template && typeof template === 'object') {
-            // MapEntry 等自定义类: 整体设置元素，保留 IProperty 结构
-            const rawTemplate = JSON.parse(JSON.stringify(template));
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: `${basePath}.length`,
-                dump: { value: newIdx + 1 },
-            });
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: `${basePath}.${newIdx}`,
-                dump: { type: propDump.elementTypeData?.type || 'Object', value: rawTemplate },
-            });
-        }
-        else if (template != null) {
-            // 简单类型
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: `${basePath}.length`,
-                dump: { value: newIdx + 1 },
-            });
-            await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid, path: `${basePath}.${newIdx}`,
-                dump: { type: typeof template === 'number' ? 'Number' : 'String', value: template },
-            });
-        }
-        // 将新元素加入本地数组并重新渲染
-        if (isCocosValue) {
-            items.push(JSON.parse(JSON.stringify(template)));
-        }
-        else if (template && typeof template === 'object') {
-            const newObj = {};
-            for (const subKey of Object.keys(template)) {
-                let subVal = template[subKey];
-                if (subVal && typeof subVal === 'object' && subVal.value !== undefined) {
-                    subVal = subVal.value;
-                }
-                newObj[subKey] = subVal;
-            }
-            items.push(newObj);
-        }
-        else if (template != null) {
-            items.push(template);
-        }
-        else {
-            items.push(0);
-        }
-        updateHeader();
-        renderItems();
-        if (taowuMeta?.onCollectionChanged)
-            await triggerCallbacks(compUuid, compIndex, propName);
-    });
-    content.appendChild(addBtn);
-    return container;
-}
-// ─── 字典 TableList 渲染 (Record<string, V> + @TableList) ───
-function buildCleanDict(valueObj) {
-    const result = {};
-    for (const k in valueObj) {
-        const v = valueObj[k];
-        if (v && typeof v === 'object' && v.value !== undefined && v.type !== undefined) {
-            result[k] = v.value;
-        }
-        else {
-            result[k] = v;
-        }
-    }
-    return result;
-}
-function createDictTableElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta) {
-    const basePath = buildPath(propDump, compIndex, propName);
-    let valueObj = propDump.value || {};
-    let keys = Object.keys(valueObj);
-    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
-    const itemsContainer = document.createElement('div');
-    itemsContainer.className = 'taowu-collection-items';
-    content.appendChild(itemsContainer);
-    function renderItems() {
-        itemsContainer.innerHTML = '';
-        keys = Object.keys(valueObj);
-        // 表头
-        {
-            const headerRow = document.createElement('div');
-            headerRow.className = 'taowu-table-row taowu-table-header';
-            const hIdx = document.createElement('span');
-            hIdx.className = 'taowu-table-index';
-            hIdx.textContent = '#';
-            headerRow.appendChild(hIdx);
-            const hKey = document.createElement('div');
-            hKey.className = 'taowu-table-cell';
-            hKey.textContent = 'Key';
-            headerRow.appendChild(hKey);
-            const hVal = document.createElement('div');
-            hVal.className = 'taowu-table-cell';
-            hVal.textContent = 'Value';
-            headerRow.appendChild(hVal);
-            const spacer = document.createElement('span');
-            spacer.className = 'taowu-table-index';
-            spacer.textContent = '';
-            headerRow.appendChild(spacer);
-            itemsContainer.appendChild(headerRow);
-        }
-        // 数据行
-        for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            let val = valueObj[key];
-            let rawValDump = null;
-            if (val && typeof val === 'object' && val.value !== undefined && val.type !== undefined) {
-                rawValDump = val;
-                val = val.value;
-            }
-            const valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
-            const tableRow = document.createElement('div');
-            tableRow.className = 'taowu-table-row';
-            const indexSpan = document.createElement('span');
-            indexSpan.className = 'taowu-table-index';
-            indexSpan.textContent = String(i);
-            tableRow.appendChild(indexSpan);
-            // Key 输入
-            const keyCell = document.createElement('div');
-            keyCell.className = 'taowu-table-cell';
-            const keyInput = document.createElement('ui-input');
-            keyInput.style.width = '100%';
-            try {
-                keyInput.value = key;
-            }
-            catch (e) { }
-            keyCell.appendChild(keyInput);
-            tableRow.appendChild(keyCell);
-            // Value 输入
-            const valCell = document.createElement('div');
-            valCell.className = 'taowu-table-cell';
-            const valDump = { value: val, type: valType };
-            const valInput = createInputElement(valDump, undefined, compUuid, compIndex, propName, isRendering, true);
-            valCell.appendChild(valInput);
-            tableRow.appendChild(valCell);
-            // 事件: Key 修改
-            ((k, ki) => {
-                ki.addEventListener('confirm', async (e) => {
-                    e.stopPropagation();
-                    const newKey = ki.value;
-                    if (newKey === k)
-                        return;
-                    if (valueObj[newKey] !== undefined) {
-                        console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
-                        ki.value = k;
-                        return;
-                    }
-                    valueObj[newKey] = valueObj[k];
-                    delete valueObj[k];
-                    // 通过 scene-script 直接修改组件属性 (绕过 set-property 的 dump 限制)
-                    const cleanVal = buildCleanDict(valueObj);
-                    await Editor.Message.request('scene', 'execute-scene-script', {
-                        name: 'taowu-inspector', method: 'setDictValue',
-                        args: [compUuid, basePath, cleanVal]
-                    });
-                    renderItems();
-                });
-            })(key, keyInput);
-            // 事件: Value 修改
-            ((k, vi, vd) => {
-                const isVi = vi.tagName.toLowerCase() === 'ui-input';
-                if (isVi) {
-                    vi.addEventListener('confirm', async (e) => {
-                        e.stopPropagation();
-                        const newVal = getInputValue(vi, vd);
-                        valueObj[k] = newVal;
-                        const setDump = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
-                        await Editor.Message.request('scene', 'set-property', {
-                            uuid: compUuid, path: basePath + '.' + k,
-                            dump: setDump
-                        });
-                        if (taowuMeta?.onCollectionChanged)
-                            await triggerCallbacks(compUuid, compIndex, propName);
-                    });
-                }
-                else {
-                    vi.addEventListener('change', async () => {
-                        if (isRendering && isRendering())
-                            return;
-                        const newVal = getInputValue(vi, vd);
-                        valueObj[k] = newVal;
-                        const setDump = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
-                        await Editor.Message.request('scene', 'set-property', {
-                            uuid: compUuid, path: basePath + '.' + k,
-                            dump: setDump
-                        });
-                        if (taowuMeta?.onCollectionChanged)
-                            await triggerCallbacks(compUuid, compIndex, propName);
-                    });
-                }
-            })(key, valInput, valDump);
-            // 删除按钮
-            const delBtn = document.createElement('span');
-            delBtn.textContent = '×';
-            delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;overflow:visible;';
-            delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f77'; });
-            delBtn.addEventListener('mouseleave', () => { delBtn.style.color = '#c55'; });
-            ((k) => {
-                delBtn.addEventListener('click', async () => {
-                    delete valueObj[k];
-                    const cleanVal = buildCleanDict(valueObj);
-                    await Editor.Message.request('scene', 'execute-scene-script', {
-                        name: 'taowu-inspector', method: 'setDictValue',
-                        args: [compUuid, basePath, cleanVal]
-                    });
-                    renderItems();
-                });
-            })(key);
-            tableRow.appendChild(delBtn);
-            itemsContainer.appendChild(tableRow);
-        }
-        // 添加区: Key 输入 + 添加按钮
-        const addRow = document.createElement('div');
-        addRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;';
-        const addKeyInput = document.createElement('ui-input');
-        addKeyInput.setAttribute('placeholder', '输入 Key');
-        addKeyInput.style.cssText = 'flex:1;min-width:0;';
-        addRow.appendChild(addKeyInput);
-        const addBtn = document.createElement('div');
-        addBtn.className = 'taowu-list-btn taowu-list-btn-add';
-        addBtn.textContent = '+ 添加';
-        addRow.appendChild(addBtn);
-        addBtn.addEventListener('click', async () => {
-            const newKey = addKeyInput.value;
-            if (!newKey) {
-                console.error('[TaoWuInspector] 请输入 Key');
-                return;
-            }
-            if (valueObj[newKey] !== undefined) {
-                console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
-                return;
-            }
-            const firstKey = Object.keys(valueObj)[0];
-            const defaultVal = firstKey !== undefined ? (typeof valueObj[firstKey] === 'number' ? 0 : '') : 0;
-            valueObj[newKey] = defaultVal;
-            const cleanVal = buildCleanDict(valueObj);
-            await Editor.Message.request('scene', 'execute-scene-script', {
-                name: 'taowu-inspector', method: 'setDictValue',
-                args: [compUuid, basePath, cleanVal]
-            });
-            addKeyInput.value = '';
-            renderItems();
-        });
-        itemsContainer.appendChild(addRow);
-        // 同步列宽
-        const headerEl = itemsContainer.querySelector('.taowu-table-header');
-        if (headerEl)
-            syncColumnWidths(headerEl, itemsContainer);
-    }
-    function updateHeader() {
-        container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
-    }
-    renderItems();
-    return container;
-}
-// ─── Map 渲染 (对象/字典, Box 风格) ───
-function createMapElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata) {
-    const basePath = buildPath(propDump, compIndex, propName);
-    const valueObj = propDump.value || {};
-    const keys = Object.keys(valueObj);
-    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
-    // 获取元素类型元数据用于 LabelText
-    const _elemTypeName = propDump.type;
-    let _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
-    // 如果元数据中没有该类型，异步查询
-    if (_elemTypeName && !_elemMeta && _elemTypeName !== 'Object' && !_elemTypeName.startsWith('cc.')) {
-        Editor.Message.request('taowu-inspector', 'query-taowu-metadata', _elemTypeName).then((em) => {
-            if (em) {
-                _elemMeta = em;
-                if (elementMetadata)
-                    elementMetadata[_elemTypeName] = em;
-                // 重新渲染标签
-                for (const key of Object.keys(em)) {
-                    const labelEl = container.querySelector(`[data-prop-key="${key}"]`);
-                    if (labelEl && em[key]?.labelText) {
-                        labelEl.textContent = em[key].labelText;
-                    }
-                }
-            }
-        }).catch(() => { });
-    }
-    for (const key of keys) {
-        const row = document.createElement('div');
-        row.className = 'taowu-collection-row';
-        const keyLabel = document.createElement('span');
-        keyLabel.className = 'taowu-collection-label';
-        keyLabel.textContent = _elemMeta[key]?.labelText || toDisplayName(key);
-        row.appendChild(keyLabel);
-        const valField = document.createElement('div');
-        valField.className = 'taowu-collection-field';
-        let val = valueObj[key];
-        let valType = 'String';
-        let rawSubDump = null;
-        if (val && typeof val === 'object' && val.value !== undefined && val.type !== undefined) {
-            valType = val.type;
-            val = val.value;
-            rawSubDump = valueObj[key];
-        }
-        else {
-            valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
-        }
-        // 如果子属性本身是对象 (嵌套 class)，递归渲染
-        if (val && typeof val === 'object' && !Array.isArray(val) && !valType.toLowerCase().startsWith('cc.') && Object.keys(val).length > 0) {
-            const nestedDump = rawSubDump || { value: val, type: valType, path: `${basePath}.${key}`, name: key };
-            const nestedEl = createMapElement(nestedDump, compUuid, compIndex, key, isRendering, _elemMeta[key], elementMetadata);
-            valField.appendChild(nestedEl);
-        }
-        else {
-            const valDump = { value: val, type: valType };
-            const valInput = createInputElement(valDump, _elemMeta[key], compUuid, compIndex, propName, isRendering, true);
-            valField.appendChild(valInput);
-            const subPath = (rawSubDump && rawSubDump.path) ? rawSubDump.path : `${basePath}.${key}`;
-            const isValInput = valInput.tagName.toLowerCase() === 'ui-input';
-            if (isValInput) {
-                valInput.addEventListener('confirm', async (e) => {
-                    e.stopPropagation();
-                    const newVal = getInputValue(valInput, valDump);
-                    valueObj[key] = newVal;
-                    const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: valType, value: newVal };
-                    await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
-                });
-            }
-            else {
-                valInput.addEventListener('change', async () => {
-                    if (isRendering && isRendering())
-                        return;
-                    const newVal = getInputValue(valInput, valDump);
-                    valueObj[key] = newVal;
-                    const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: valType, value: newVal };
-                    await Editor.Message.request('scene', 'set-property', { uuid: compUuid, path: subPath, dump: setDump });
-                });
-            }
-        }
-        row.appendChild(valField);
-        content.appendChild(row);
-    }
-    return container;
-}
-// ─── 事件监听 ───
-function setupChangeListener(input, propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged) {
-    const propPath = buildPath(propDump, compIndex, propName);
-    // ui-prop with type="dump" uses change-dump event
-    if (input.tagName.toLowerCase() === 'ui-prop') {
-        let lastValue = JSON.parse(JSON.stringify(propDump.value));
-        const handleChange = async () => {
-            if (isRendering && isRendering())
-                return;
-            await new Promise(r => requestAnimationFrame(r));
-            const newVal = input.dump ? input.dump.value : undefined;
-            if (newVal === undefined)
-                return;
-            if (JSON.stringify(newVal) === JSON.stringify(lastValue))
-                return;
-            lastValue = JSON.parse(JSON.stringify(newVal));
-            propDump.value = newVal;
-            const result = await Editor.Message.request('scene', 'set-property', {
-                uuid: compUuid,
-                path: propPath,
-                dump: { type: propDump.type, value: newVal },
-            });
-            if (result) {
-                const contentEl = input.closest('.taowu-content');
-                if (contentEl && contentEl.__taowuRerender) {
-                    contentEl.__taowuRerender(propName, newVal);
-                }
-                // 触发 OnValueChanged / OnCollectionChanged 回调
-                if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged) {
-                    await triggerCallbacks(compUuid, compIndex, propName);
-                }
-            }
-        };
-        input.addEventListener('change-dump', handleChange);
-        return;
-    }
-    const isSlider = input.tagName.toLowerCase() === 'ui-slider';
-    let lastWrittenValue = propDump.value;
-    const doSetProperty = async () => {
-        const newValue = getInputValue(input, propDump);
-        if (JSON.stringify(newValue) === JSON.stringify(lastWrittenValue))
-            return;
-        const setDump = {
-            type: propDump.type,
-            value: newValue,
-        };
-        const result = await Editor.Message.request('scene', 'set-property', {
-            uuid: compUuid,
-            path: propPath,
-            dump: setDump,
-        });
-        if (!result) {
-            console.warn('[TaoWuInspector] set-property failed');
-            try {
-                setInputValue(input, propDump.value, propDump);
-            }
-            catch (e) { }
-        }
-        else {
-            propDump.value = newValue;
-            lastWrittenValue = newValue;
-        }
-        if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged) {
-            await triggerCallbacks(compUuid, compIndex, propName);
-        }
-    };
-    // ui-input: 用 confirm 事件写入 (与 Cocos Inspector 一致)
-    // ui-slider: 也用 confirm 事件
-    const isInputLike = input.tagName.toLowerCase() === 'ui-input' || isSlider;
-    if (isInputLike) {
-        input.addEventListener('confirm', (e) => {
-            e.stopPropagation();
-            doSetProperty();
-        });
-    }
-    else {
-        input.addEventListener('change', () => {
-            doSetProperty();
-        });
-    }
-}
-/** 从 UI 元素获取值 */
 function getInputValue(input, propDump) {
     const tagName = input.tagName.toLowerCase();
-    if (tagName === 'ui-checkbox') {
+    if (tagName === 'ui-checkbox')
         return input.checked || input.hasAttribute('checked');
-    }
     if (tagName === 'ui-select') {
         const val = input.value;
         return propDump.enumList ? Number(val) : val;
     }
-    if (tagName === 'ui-slider' || tagName === 'ui-num-input') {
+    if (tagName === 'ui-slider' || tagName === 'ui-num-input')
         return Number(input.value);
-    }
     if (tagName === 'ui-color') {
         const v = input.value;
         return { r: v.r, g: v.g, b: v.b, a: v.a };
@@ -1674,15 +587,12 @@ function getInputValue(input, propDump) {
         const keys = (input.dataset.multiKeys || '').split(',');
         const inputs = input.querySelectorAll('ui-num-input');
         const result = {};
-        inputs.forEach((inp, idx) => {
-            if (idx < keys.length)
-                result[keys[idx]] = Number(inp.value);
-        });
+        inputs.forEach((inp, idx) => { if (idx < keys.length)
+            result[keys[idx]] = Number(inp.value); });
         return result;
     }
     return input.value;
 }
-/** 设置 UI 元素的值 */
 function setInputValue(input, value, propDump) {
     const tagName = input.tagName.toLowerCase();
     if (tagName === 'ui-checkbox') {
@@ -1698,25 +608,1411 @@ function setInputValue(input, value, propDump) {
         catch (e) { }
     }
 }
-/** 创建标题元素 */
-function createTitleElement(title, horizontalLine) {
-    const container = document.createElement('div');
-    container.className = 'taowu-title';
-    const text = document.createElement('span');
-    text.className = 'taowu-title-text';
-    text.textContent = title;
-    container.appendChild(text);
-    if (horizontalLine) {
-        const line = document.createElement('hr');
-        line.className = 'taowu-title-line';
-        container.appendChild(line);
+function syncColumnWidths(header, container) {
+    const headerCells = header.querySelectorAll('.taowu-table-cell, .taowu-table-index');
+    const firstRow = container.querySelector('.taowu-table-row:not(.taowu-table-header)');
+    if (!firstRow)
+        return;
+    const rowCells = firstRow.querySelectorAll('.taowu-table-cell, .taowu-table-index');
+    headerCells.forEach((h, i) => { if (rowCells[i]) {
+        h.style.width = rowCells[i].offsetWidth + 'px';
+    } });
+}
+/** 拖拽调整列宽: headerCell 为表头单元格, container 为 TableList 的 itemsContainer */
+function attachColumnResize(resizer, headerCell, container) {
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startWidth = headerCell.offsetWidth;
+        // 找到该列在表头中的索引
+        const headerRow = headerCell.parentElement;
+        if (!headerRow)
+            return;
+        const allHeaderCells = Array.from(headerRow.querySelectorAll('.taowu-table-cell, .taowu-table-index'));
+        const colIndex = allHeaderCells.indexOf(headerCell);
+        // 收集所有行的对应单元格
+        const allRows = container.querySelectorAll('.taowu-table-row');
+        const targetCells = [];
+        allRows.forEach((row) => {
+            const cells = row.querySelectorAll('.taowu-table-cell, .taowu-table-index');
+            if (cells[colIndex])
+                targetCells.push(cells[colIndex]);
+        });
+        const onMove = (ev) => {
+            const newWidth = Math.max(30, startWidth + ev.clientX - startX);
+            targetCells.forEach((c) => {
+                c.style.flex = '0 0 ' + newWidth + 'px';
+                c.style.width = newWidth + 'px';
+            });
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+}
+/** json-edit 模式: 将修改的值同步回 jsonState.asset 原始对象 */
+function syncJsonEditValue(asset, propDump, newVal) {
+    const key = propDump.name || propDump.displayName;
+    if (key && asset) {
+        asset[key] = newVal;
+    }
+}
+// List, TableList, DictTable, Map, setupChangeListener 等大函数由于篇幅限制
+// 从 dist JS 反向重建，保持相同逻辑但恢复正确的 safeSetProperty 调用参数
+// 以下代码由 dist/inspector/property-drawer.js 转换而来，修正了 safeSetProperty 参数
+function createListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata) {
+    const basePath = buildPath(propDump, compIndex, propName);
+    const rawItems = Array.isArray(propDump.value) ? propDump.value : [];
+    // json-edit 模式下深拷贝避免对象引用共享，增删后同步回原始数组
+    const isJsonEdit = compUuid === 'json-edit';
+    const items = (isJsonEdit ? rawItems.map((item) => item && typeof item === 'object' ? JSON.parse(JSON.stringify(item)) : item) : rawItems).map((item) => {
+        if (!item || typeof item !== 'object')
+            return item;
+        if (item.value !== undefined) {
+            const isIProp = item.type !== undefined || item.default !== undefined || item.name !== undefined || item.path !== undefined;
+            if (isIProp)
+                return item.value;
+        }
+        return item;
+    });
+    const elementTypeData = propDump.elementTypeData || { type: 'Number', value: 0 };
+    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`, propName);
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'taowu-collection-items';
+    content.appendChild(itemsContainer);
+    function renderItems() {
+        // 保存当前展开状态
+        const expandedHeaders = new Set();
+        itemsContainer.querySelectorAll('ui-section.taowu-collection-item-box').forEach((sec) => {
+            if (sec.hasAttribute('expand')) {
+                const h = sec.getAttribute('header');
+                if (h)
+                    expandedHeaders.add(h);
+            }
+        });
+        itemsContainer.innerHTML = '';
+        for (let i = 0; i < items.length; i++) {
+            const itemValue = items[i];
+            const _isCocosType = (() => {
+                if (typeof itemValue !== 'object' || itemValue === null || Array.isArray(itemValue))
+                    return false;
+                if (itemValue.type !== undefined && typeof itemValue.value === 'object' && itemValue.value !== null) {
+                    const t = itemValue.type;
+                    return t === 'cc.Vec3' || t === 'cc.Vec2' || t === 'cc.Vec4' || t === 'cc.Color' || t === 'cc.Size' || t === 'cc.Quat';
+                }
+                const keys = Object.keys(itemValue);
+                return (keys.includes('x') && keys.includes('y')) || keys.includes('r') || keys.includes('width');
+            })();
+            const isObj = typeof itemValue === 'object' && itemValue !== null && !Array.isArray(itemValue) && !_isCocosType;
+            if (isObj) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'taowu-collection-item-wrapper';
+                const _elemTypeName = propDump.elementTypeData?.type;
+                const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
+                const delBtn = createDelButton('×');
+                delBtn.addEventListener('click', async (ev) => {
+                    ev.stopPropagation();
+                    if (!compUuid)
+                        return;
+                    items.splice(i, 1);
+                    if (compUuid === 'json-edit') {
+                        if (json_asset_renderer_1.jsonState.asset) {
+                            json_asset_renderer_1.jsonState.dirty = true;
+                            if (json_asset_renderer_1.jsonState.onDirty)
+                                json_asset_renderer_1.jsonState.onDirty();
+                        }
+                        // 同步回 propDump.value (原始 JSON 数组引用)
+                        propDump.value.length = 0;
+                        propDump.value.push(...items);
+                        updateHeader();
+                        renderItems();
+                        return;
+                    }
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
+                    propDump.value = [...items];
+                    updateHeader();
+                    renderItems();
+                    if (taowuMeta?.onCollectionChanged)
+                        await triggerCallbacks(compUuid, compIndex, propName);
+                });
+                wrapper.appendChild(delBtn);
+                const itemBox = document.createElement('ui-section');
+                itemBox.className = 'taowu-collection-item-box';
+                const _itemHeader = `${_elemTypeName || 'Element'} ${i}`;
+                itemBox.setAttribute('header', _itemHeader);
+                if (expandedHeaders.has(_itemHeader))
+                    itemBox.setAttribute('expand', '');
+                const itemContent = document.createElement('div');
+                itemContent.className = 'taowu-collection-item-content';
+                const stop = (e) => e.stopPropagation();
+                itemContent.addEventListener('click', stop);
+                itemContent.addEventListener('mousedown', stop);
+                itemContent.addEventListener('pointerdown', stop);
+                itemContent.addEventListener('change', stop);
+                itemContent.addEventListener('confirm', stop);
+                const unwrapped = (itemValue.value !== undefined && itemValue.type !== undefined && typeof itemValue.value === 'object') ? itemValue.value : itemValue;
+                const keys = Object.keys(unwrapped);
+                for (const subKey of keys) {
+                    const subRow = document.createElement('div');
+                    subRow.className = 'taowu-collection-row';
+                    const subLabel = document.createElement('span');
+                    subLabel.className = 'taowu-collection-label';
+                    subLabel.textContent = _elemMeta[subKey]?.labelText || toDisplayName(subKey);
+                    subRow.appendChild(subLabel);
+                    const subField = document.createElement('div');
+                    subField.className = 'taowu-collection-field';
+                    let subVal = unwrapped[subKey];
+                    let subType = 'String';
+                    let subPath = `${basePath}.${i}.${subKey}`;
+                    let rawSubDump = null;
+                    if (subVal && typeof subVal === 'object' && subVal.value !== undefined && subVal.type !== undefined) {
+                        subType = subVal.type;
+                        subVal = subVal.value;
+                        rawSubDump = unwrapped[subKey];
+                        if (rawSubDump && rawSubDump.path)
+                            subPath = rawSubDump.path;
+                    }
+                    else {
+                        subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
+                    }
+                    const subDump = { value: subVal, type: subType };
+                    const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
+                    const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
+                    subField.appendChild(subInput);
+                    const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
+                    if (isSubInput) {
+                        subInput.addEventListener('confirm', async (e) => {
+                            e.stopPropagation();
+                            const newVal = getInputValue(subInput, subDump);
+                            unwrapped[subKey] = newVal;
+                            items[i] = unwrapped;
+                            // json-edit: 同步回原始数组
+                            if (isJsonEdit) {
+                                propDump.value[i] = items[i];
+                                if (json_asset_renderer_1.jsonState.asset) {
+                                    json_asset_renderer_1.jsonState.dirty = true;
+                                    if (json_asset_renderer_1.jsonState.onDirty)
+                                        json_asset_renderer_1.jsonState.onDirty();
+                                }
+                            }
+                            ;
+                            const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
+                            await safeSetProperty(compUuid, subPath, setDump);
+                            if (taowuMeta?.onCollectionChanged)
+                                await triggerCallbacks(compUuid, compIndex, propName);
+                        });
+                    }
+                    else {
+                        subInput.addEventListener('change', async () => {
+                            if (isRendering && isRendering())
+                                return;
+                            const newVal = getInputValue(subInput, subDump);
+                            unwrapped[subKey] = newVal;
+                            items[i] = unwrapped;
+                            // json-edit: 同步回原始数组
+                            if (isJsonEdit) {
+                                propDump.value[i] = items[i];
+                                if (json_asset_renderer_1.jsonState.asset) {
+                                    json_asset_renderer_1.jsonState.dirty = true;
+                                    if (json_asset_renderer_1.jsonState.onDirty)
+                                        json_asset_renderer_1.jsonState.onDirty();
+                                }
+                            }
+                            ;
+                            const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
+                            await safeSetProperty(compUuid, subPath, setDump);
+                            if (taowuMeta?.onCollectionChanged)
+                                await triggerCallbacks(compUuid, compIndex, propName);
+                        });
+                    }
+                    subRow.appendChild(subField);
+                    itemContent.appendChild(subRow);
+                }
+                itemBox.appendChild(itemContent);
+                wrapper.appendChild(itemBox);
+                itemsContainer.appendChild(wrapper);
+            }
+            else {
+                const itemRow = document.createElement('div');
+                itemRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin:1px 0;width:100%;';
+                const indexLabel = document.createElement('span');
+                indexLabel.style.cssText = 'flex:0 0 20px;font-size:11px;color:#888;text-align:center;';
+                indexLabel.textContent = String(i);
+                itemRow.appendChild(indexLabel);
+                const itemContent = document.createElement('div');
+                itemContent.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;';
+                let itemDump, itemPath;
+                let _useRaw = true;
+                if (_isCocosType) {
+                    // 从值字段检测具体 Cocos 类型 (不依赖 elementTypeData.type，json-edit 下可能是 'Object')
+                    const _v = (items[i].value !== undefined && items[i].type !== undefined) ? items[i].value : items[i];
+                    const _vk = Object.keys(_v);
+                    let rawType = '';
+                    if (_vk.includes('r') && _vk.includes('g') && _vk.includes('b'))
+                        rawType = 'cc.Color';
+                    else if (_vk.includes('width') && _vk.includes('height'))
+                        rawType = 'cc.Size';
+                    else if (_vk.includes('x') && _vk.includes('y') && _vk.includes('z') && _vk.includes('w'))
+                        rawType = 'cc.Vec4';
+                    else if (_vk.includes('x') && _vk.includes('y') && _vk.includes('z'))
+                        rawType = 'cc.Vec3';
+                    else if (_vk.includes('x') && _vk.includes('y'))
+                        rawType = 'cc.Vec2';
+                    // fallback to elementTypeData if detection failed
+                    if (!rawType) {
+                        let et = elementTypeData.type || '';
+                        if (et && !et.startsWith('cc.'))
+                            et = 'cc.' + et;
+                        rawType = et || 'cc.Vec3';
+                    }
+                    const _rawVal = _v;
+                    itemDump = { value: _rawVal, type: rawType };
+                    itemPath = (items[i].path) ? items[i].path : `${basePath}.${i}`;
+                    _useRaw = false;
+                }
+                else {
+                    const itemType = elementTypeData.type || (typeof items[i] === 'number' ? 'Number' : 'String');
+                    itemDump = { value: items[i], type: itemType };
+                    itemPath = `${basePath}.${i}`;
+                }
+                const itemInput = createInputElement(itemDump, taowuMeta, compUuid, compIndex, propName, isRendering, _useRaw);
+                itemContent.appendChild(itemInput);
+                // Cocos 类型: 需要 .render() 才能显示
+                if (!_useRaw && itemInput.tagName.toLowerCase() === 'ui-prop') {
+                    requestAnimationFrame(() => {
+                        try {
+                            itemInput.dump = itemDump;
+                        }
+                        catch (e) { }
+                        try {
+                            itemInput.render(itemDump);
+                        }
+                        catch (e) { }
+                    });
+                    itemInput.addEventListener('change-dump', async () => {
+                        if (isRendering && isRendering())
+                            return;
+                        const newDump = itemInput.dump;
+                        if (!newDump)
+                            return;
+                        items[i] = newDump.value;
+                        await safeSetProperty(compUuid, itemPath, newDump);
+                        propDump.value[i] = newDump.value;
+                        if (taowuMeta?.onCollectionChanged)
+                            await triggerCallbacks(compUuid, compIndex, propName);
+                    });
+                }
+                else {
+                    const _itemTag = itemInput.tagName.toLowerCase();
+                    if (_itemTag === 'ui-input') {
+                        itemInput.addEventListener('confirm', async (e) => {
+                            e.stopPropagation();
+                            const newVal = getInputValue(itemInput, itemDump);
+                            items[i] = newVal;
+                            await safeSetProperty(compUuid, itemPath, { type: itemDump.type, value: newVal });
+                            propDump.value[i] = newVal;
+                            if (taowuMeta?.onCollectionChanged)
+                                await triggerCallbacks(compUuid, compIndex, propName);
+                        });
+                    }
+                    itemInput.addEventListener('change', async () => {
+                        if (isRendering && isRendering())
+                            return;
+                        const newVal = getInputValue(itemInput, itemDump);
+                        items[i] = newVal;
+                        await safeSetProperty(compUuid, itemPath, { type: itemDump.type, value: newVal });
+                        propDump.value[i] = newVal;
+                        if (taowuMeta?.onCollectionChanged)
+                            await triggerCallbacks(compUuid, compIndex, propName);
+                    });
+                }
+                itemRow.appendChild(itemContent);
+                const delBtn = document.createElement('span');
+                delBtn.textContent = '×';
+                delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;';
+                delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f77'; });
+                delBtn.addEventListener('mouseleave', () => { delBtn.style.color = '#c55'; });
+                delBtn.addEventListener('click', async () => {
+                    if (!compUuid)
+                        return;
+                    items.splice(i, 1);
+                    if (compUuid === 'json-edit') {
+                        if (json_asset_renderer_1.jsonState.asset) {
+                            json_asset_renderer_1.jsonState.dirty = true;
+                            if (json_asset_renderer_1.jsonState.onDirty)
+                                json_asset_renderer_1.jsonState.onDirty();
+                        }
+                        propDump.value.length = 0;
+                        propDump.value.push(...items);
+                        updateHeader();
+                        renderItems();
+                        return;
+                    }
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
+                    propDump.value = [...items];
+                    updateHeader();
+                    renderItems();
+                    if (taowuMeta?.onCollectionChanged)
+                        await triggerCallbacks(compUuid, compIndex, propName);
+                });
+                itemRow.appendChild(delBtn);
+                itemsContainer.appendChild(itemRow);
+            }
+        }
+    }
+    function updateHeader() { container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`); }
+    renderItems();
+    if (!compUuid) {
+        const addBtn = createAddButton('+ 添加');
+        addBtn.addEventListener('click', (e) => { e.stopPropagation(); });
+        content.appendChild(addBtn);
+        return container;
+    }
+    // json-edit: 仅当能推断默认值时才显示添加按钮
+    const elemType = elementTypeData?.type || '';
+    if (isJsonEdit && items.length === 0 && !canInferElementDefault(elemType, elementMetadata))
+        return container;
+    const addBtn = createAddButton('+ 添加');
+    addBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        let defaultVal;
+        if (items.length > 0) {
+            // 非空数组: 按现有逻辑用第一个元素做模板
+            defaultVal = JSON.parse(JSON.stringify(items[0]));
+        }
+        else {
+            // 空数组: 根据元数据推断默认值
+            defaultVal = inferElementDefault(elemType, elementMetadata) ?? (elementTypeData.value != null ? elementTypeData.value : 0);
+        }
+        const newIdx = items.length;
+        items.push(defaultVal);
+        if (compUuid === 'json-edit') {
+            // json-edit: 异步修正嵌套字段默认值后重新渲染
+            if (defaultVal && typeof defaultVal === 'object' && !Array.isArray(defaultVal)) {
+                const changed = await fixElementDefaults(defaultVal, elemType, elementMetadata);
+                if (changed)
+                    items[newIdx] = defaultVal;
+            }
+            if (json_asset_renderer_1.jsonState.asset) {
+                json_asset_renderer_1.jsonState.dirty = true;
+                if (json_asset_renderer_1.jsonState.onDirty)
+                    json_asset_renderer_1.jsonState.onDirty();
+            }
+            propDump.value.length = 0;
+            propDump.value.push(...items);
+            updateHeader();
+            renderItems();
+            return;
+        }
+        await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
+        // Cocos set-property: 自定义 CCClass 对象需要 __type__ 格式，不能直接传原始对象
+        let setDump = { type: elementTypeData.type };
+        const _etList = elementTypeData.type || '';
+        const _isCCList = _etList && !['Number', 'String', 'Boolean', 'Object'].includes(_etList) && !_etList.startsWith('cc.');
+        if (defaultVal && typeof defaultVal === 'object' && !Array.isArray(defaultVal) && _isCCList) {
+            setDump.value = { __type__: _etList };
+        }
+        else {
+            setDump.value = defaultVal;
+        }
+        await safeSetProperty(compUuid, `${basePath}.${newIdx}`, setDump);
+        // CCClass 类型: 等待 Cocos update() 刷新 dump 后重新渲染
+        if (_isCCList && defaultVal && typeof defaultVal === 'object') {
+            // set-property 后 Cocos 异步调用 update()，等待后再 forceQuery 刷新
+            await new Promise(r => setTimeout(r, 100));
+            const contentEl = content.closest('.taowu-content');
+            if (contentEl?.__taowuRerender)
+                await contentEl.__taowuRerender(undefined, undefined, true);
+            return;
+        }
+        updateHeader();
+        renderItems();
+        if (taowuMeta?.onCollectionChanged)
+            await triggerCallbacks(compUuid, compIndex, propName);
+    });
+    content.appendChild(addBtn);
+    return container;
+}
+// ─── TableList 渲染 ───
+function createTableListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata) {
+    const basePath = buildPath(propDump, compIndex, propName);
+    let rawItems = [];
+    if (Array.isArray(propDump.value))
+        rawItems = propDump.value;
+    else if (propDump.value && typeof propDump.value === 'object') {
+        const valObj = propDump.value;
+        if (valObj.length != null)
+            for (let k = 0; k < valObj.length; k++)
+                rawItems.push(valObj[k]);
+    }
+    const items = rawItems.map((item) => {
+        if (!item || typeof item !== 'object')
+            return item;
+        if (item.value !== undefined) {
+            const isIProp = item.type !== undefined || item.default !== undefined || item.name !== undefined || item.path !== undefined;
+            if (isIProp && typeof item.value === 'object' && item.value !== null)
+                return item.value;
+            if (isIProp)
+                return item.value;
+        }
+        return item;
+    });
+    const elementTypeData = propDump.elementTypeData;
+    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`, propName);
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'taowu-collection-items';
+    content.appendChild(itemsContainer);
+    function renderItems() {
+        itemsContainer.innerHTML = '';
+        // 表头
+        if (items.length > 0) {
+            const firstItem = items[0];
+            if (typeof firstItem === 'object' && firstItem !== null && !Array.isArray(firstItem)) {
+                const firstUnwrapped = (firstItem.value !== undefined && firstItem.type !== undefined && typeof firstItem.value === 'object') ? firstItem.value : firstItem;
+                const firstKeys = Object.keys(firstUnwrapped).filter(k => k !== '_t');
+                const firstIsCocos = !firstUnwrapped._t && ((firstKeys.includes('x') && firstKeys.includes('y')) || firstKeys.includes('r') || firstKeys.includes('width'));
+                if (!firstIsCocos) {
+                    const headerRow = document.createElement('div');
+                    headerRow.className = 'taowu-table-row taowu-table-header';
+                    const headerIndex = document.createElement('span');
+                    headerIndex.className = 'taowu-table-index';
+                    headerIndex.textContent = '#';
+                    headerRow.appendChild(headerIndex);
+                    const elemTypeName = propDump.elementTypeData?.type;
+                    const elemMeta = (elemTypeName && elementMetadata && elementMetadata[elemTypeName]) || {};
+                    for (const key of firstKeys) {
+                        const cell = document.createElement('div');
+                        cell.className = 'taowu-table-cell';
+                        cell.textContent = elemMeta[key]?.labelText || toDisplayName(key);
+                        // 列拖拽调整宽度
+                        const resizer = document.createElement('div');
+                        resizer.className = 'taowu-col-resizer';
+                        cell.appendChild(resizer);
+                        attachColumnResize(resizer, cell, itemsContainer);
+                        headerRow.appendChild(cell);
+                    }
+                    const spacer = document.createElement('span');
+                    spacer.className = 'taowu-table-index';
+                    spacer.textContent = '';
+                    headerRow.appendChild(spacer);
+                    itemsContainer.appendChild(headerRow);
+                }
+            }
+        }
+        for (let i = 0; i < items.length; i++) {
+            const _itemValue = items[i];
+            if (typeof _itemValue === 'object' && _itemValue !== null && !Array.isArray(_itemValue)) {
+                const _unwrapped = (_itemValue.value !== undefined && _itemValue.type !== undefined && typeof _itemValue.value === 'object') ? _itemValue.value : _itemValue;
+                const _keys = Object.keys(_unwrapped).filter(k => k !== '_t');
+                const _isCocos = !_unwrapped._t && ((_keys.includes('x') && _keys.includes('y') && _keys.includes('z')) || (_keys.includes('r') && _keys.includes('g') && _keys.includes('b')) || (_keys.includes('width') && _keys.includes('height')));
+                const _elemTypeName = propDump.elementTypeData?.type;
+                const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
+                if (!_isCocos) {
+                    const tableRow = document.createElement('div');
+                    tableRow.className = 'taowu-table-row';
+                    const indexSpan = document.createElement('span');
+                    indexSpan.className = 'taowu-table-index';
+                    indexSpan.textContent = String(i);
+                    tableRow.appendChild(indexSpan);
+                    for (const subKey of _keys) {
+                        const cell = document.createElement('div');
+                        cell.className = 'taowu-table-cell';
+                        let subVal = _unwrapped[subKey];
+                        let subType = 'String';
+                        let subPath = `${basePath}.${i}.${subKey}`;
+                        let rawSubDump = null;
+                        if (subVal && typeof subVal === 'object' && subVal.value !== undefined && subVal.type !== undefined) {
+                            subType = subVal.type;
+                            subVal = subVal.value;
+                            rawSubDump = _unwrapped[subKey];
+                            if (rawSubDump && rawSubDump.path)
+                                subPath = rawSubDump.path;
+                        }
+                        else if (subVal && typeof subVal === 'object' && !Array.isArray(subVal)) {
+                            // 嵌套对象: 检测 _t 或 Cocos 基础类型
+                            if (subVal._t)
+                                subType = String(subVal._t);
+                            else {
+                                const sk = Object.keys(subVal);
+                                if (sk.includes('x') && sk.includes('y') && sk.includes('z') && !sk.includes('w'))
+                                    subType = 'cc.Vec3';
+                                else if (sk.includes('x') && sk.includes('y') && sk.includes('z') && sk.includes('w'))
+                                    subType = 'cc.Vec4';
+                                else if (sk.includes('x') && sk.includes('y') && !sk.includes('z'))
+                                    subType = 'cc.Vec2';
+                                else if (sk.includes('r') && sk.includes('g') && sk.includes('b'))
+                                    subType = 'cc.Color';
+                                else if (sk.includes('width') && sk.includes('height'))
+                                    subType = 'cc.Size';
+                                // 组件 dump: 子属性是 IProperty 格式 {key:{value,type,path}, ...}
+                                // 检测是否是 CCClass 嵌套对象 (子属性有 .value 和 .type)
+                                else if (sk.some(k => { const sv = subVal[k]; return sv && typeof sv === 'object' && sv.value !== undefined && sv.type !== undefined; })) {
+                                    const _rawSubDump = _unwrapped[subKey];
+                                    subType = _rawSubDump?.type || 'Object';
+                                    rawSubDump = _rawSubDump;
+                                }
+                                else
+                                    subType = 'String';
+                            }
+                        }
+                        else {
+                            subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
+                        }
+                        const subDump = { value: subVal, type: subType, _ownerType: _elemTypeName };
+                        const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
+                        // 嵌套对象 with _t: 查找对应类型的元数据
+                        let _subMeta = _elemMeta[subKey] || {};
+                        if (_isNestedObj && subVal && subVal._t) {
+                            const subTypeName = String(subVal._t);
+                            if (elementMetadata && elementMetadata[subTypeName]) {
+                                _subMeta = elementMetadata[subTypeName];
+                            }
+                        }
+                        const subInput = createInputElement(subDump, _subMeta, compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
+                        cell.appendChild(subInput);
+                        const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
+                        if (isSubInput) {
+                            subInput.addEventListener('confirm', async (e) => {
+                                e.stopPropagation();
+                                const newVal = getInputValue(subInput, subDump);
+                                _unwrapped[subKey] = newVal;
+                                const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
+                                await safeSetProperty(compUuid, subPath, setDump);
+                            });
+                        }
+                        else {
+                            subInput.addEventListener('change', async () => {
+                                if (isRendering && isRendering())
+                                    return;
+                                const newVal = getInputValue(subInput, subDump);
+                                _unwrapped[subKey] = newVal;
+                                const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: subType, value: newVal };
+                                await safeSetProperty(compUuid, subPath, setDump);
+                            });
+                        }
+                        tableRow.appendChild(cell);
+                    }
+                    const tblDelBtn = createDelButton('×');
+                    tblDelBtn.addEventListener('click', async () => {
+                        if (!compUuid)
+                            return;
+                        items.splice(i, 1);
+                        if (compUuid === 'json-edit') {
+                            if (json_asset_renderer_1.jsonState.asset) {
+                                json_asset_renderer_1.jsonState.dirty = true;
+                                if (json_asset_renderer_1.jsonState.onDirty)
+                                    json_asset_renderer_1.jsonState.onDirty();
+                            }
+                            propDump.value.length = 0;
+                            propDump.value.push(...items);
+                            updateHeader();
+                            renderItems();
+                            return;
+                        }
+                        await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
+                        for (let j = 0; j < items.length; j++) {
+                            const v = items[j];
+                            if (typeof v === 'object' && v !== null) {
+                                const _et = propDump.elementTypeData?.type || 'Object';
+                                const _dump = { type: _et };
+                                const _isCC = _et && !['Number', 'String', 'Boolean', 'Object'].includes(_et) && !_et.startsWith('cc.');
+                                _dump.value = _isCC ? { __type__: _et } : v;
+                                await safeSetProperty(compUuid, `${basePath}.${j}`, _dump);
+                            }
+                            else
+                                await safeSetProperty(compUuid, `${basePath}.${j}`, { type: typeof v === 'number' ? 'Number' : 'String', value: v });
+                        }
+                        propDump.value = [...items];
+                        updateHeader();
+                        renderItems();
+                    });
+                    tableRow.appendChild(tblDelBtn);
+                    itemsContainer.appendChild(tableRow);
+                    continue;
+                }
+            }
+            // 简单类型 / Cocos 类型
+            const tableRow = document.createElement('div');
+            tableRow.className = 'taowu-table-row';
+            const indexSpan = document.createElement('span');
+            indexSpan.className = 'taowu-table-index';
+            indexSpan.textContent = String(i);
+            tableRow.appendChild(indexSpan);
+            const cell = document.createElement('div');
+            cell.className = 'taowu-table-cell';
+            // 嵌套对象 with _t: 用 createInputElement 渲染 (会走 createMapElement)
+            if (_itemValue && typeof _itemValue === 'object' && !Array.isArray(_itemValue) && _itemValue._t) {
+                const nestedTypeName = String(_itemValue._t);
+                const nestedMeta = (elementMetadata && elementMetadata[nestedTypeName]) || {};
+                const nestedDump = { value: _itemValue, type: nestedTypeName, name: nestedTypeName, displayName: nestedTypeName };
+                const nestedEl = createInputElement(nestedDump, nestedMeta, compUuid, compIndex, nestedTypeName, isRendering, false, elementMetadata);
+                cell.appendChild(nestedEl);
+                tableRow.appendChild(cell);
+                const tblDelBtn = createDelButton('×');
+                tblDelBtn.addEventListener('click', async () => {
+                    if (!compUuid)
+                        return;
+                    items.splice(i, 1);
+                    if (compUuid === 'json-edit') {
+                        if (json_asset_renderer_1.jsonState.asset) {
+                            json_asset_renderer_1.jsonState.dirty = true;
+                            if (json_asset_renderer_1.jsonState.onDirty)
+                                json_asset_renderer_1.jsonState.onDirty();
+                        }
+                        propDump.value.length = 0;
+                        propDump.value.push(...items);
+                        updateHeader();
+                        renderItems();
+                        return;
+                    }
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
+                    propDump.value = [...items];
+                    updateHeader();
+                    renderItems();
+                    if (taowuMeta?.onCollectionChanged)
+                        await triggerCallbacks(compUuid, compIndex, propName);
+                });
+                tableRow.appendChild(tblDelBtn);
+                itemsContainer.appendChild(tableRow);
+                continue;
+            }
+            // 检测 Cocos 基础类型
+            let _itemType = typeof _itemValue === 'number' ? 'Number' : typeof _itemValue === 'boolean' ? 'Boolean' : typeof _itemValue === 'string' ? 'String' : 'String';
+            let _useRaw = true;
+            // 解包 IProperty {value, type, path} → 原始值
+            let _rawItemVal = _itemValue;
+            if (_itemValue && typeof _itemValue === 'object' && _itemValue.value !== undefined && _itemValue.type !== undefined) {
+                _rawItemVal = _itemValue.value;
+                _itemType = _itemValue.type;
+            }
+            // 标准化 Cocos 类型名
+            if (_itemType && !_itemType.startsWith('cc.') && _itemType !== 'Number' && _itemType !== 'String' && _itemType !== 'Boolean' && _itemType !== 'Object') {
+                const lower = _itemType.toLowerCase();
+                if (lower.includes('vec3'))
+                    _itemType = 'cc.Vec3';
+                else if (lower.includes('vec4') || lower.includes('quat'))
+                    _itemType = 'cc.Vec4';
+                else if (lower.includes('vec2'))
+                    _itemType = 'cc.Vec2';
+                else if (lower.includes('color'))
+                    _itemType = 'cc.Color';
+                else if (lower.includes('size'))
+                    _itemType = 'cc.Size';
+            }
+            // 从值字段检测 Cocos 类型 (json-edit 下 elementTypeData.type 可能是 'Object')
+            if (_rawItemVal && typeof _rawItemVal === 'object' && !Array.isArray(_rawItemVal)) {
+                const _ik = Object.keys(_rawItemVal);
+                if (_itemType === 'String' || _itemType === 'Object') {
+                    if (_ik.includes('r') && _ik.includes('g') && _ik.includes('b'))
+                        _itemType = 'cc.Color';
+                    else if (_ik.includes('width') && _ik.includes('height'))
+                        _itemType = 'cc.Size';
+                    else if (_ik.includes('x') && _ik.includes('y') && _ik.includes('z') && _ik.includes('w'))
+                        _itemType = 'cc.Vec4';
+                    else if (_ik.includes('x') && _ik.includes('y') && _ik.includes('z'))
+                        _itemType = 'cc.Vec3';
+                    else if (_ik.includes('x') && _ik.includes('y') && !_ik.includes('z'))
+                        _itemType = 'cc.Vec2';
+                }
+            }
+            const itemDump = { value: _rawItemVal, type: _itemType };
+            const _isCocosItem = _itemType.startsWith('cc.');
+            const itemInput = createInputElement(itemDump, taowuMeta, compUuid, compIndex, propName, isRendering, !_isCocosItem);
+            cell.appendChild(itemInput);
+            // Cocos 类型: 需要 .render() 才能显示
+            if (_isCocosItem && itemInput.tagName.toLowerCase() === 'ui-prop') {
+                requestAnimationFrame(() => {
+                    try {
+                        itemInput.dump = itemDump;
+                    }
+                    catch (e) { }
+                    try {
+                        itemInput.render(itemDump);
+                    }
+                    catch (e) { }
+                });
+                itemInput.addEventListener('change-dump', async () => {
+                    if (isRendering && isRendering())
+                        return;
+                    const newDump = itemInput.dump;
+                    if (!newDump)
+                        return;
+                    items[i] = newDump.value;
+                    await safeSetProperty(compUuid, `${basePath}.${i}`, newDump);
+                    propDump.value[i] = newDump.value;
+                    if (taowuMeta?.onCollectionChanged)
+                        await triggerCallbacks(compUuid, compIndex, propName);
+                });
+            }
+            else {
+                const _itemTag2 = itemInput.tagName.toLowerCase();
+                const onItemChange = async () => {
+                    if (isRendering && isRendering())
+                        return;
+                    const newVal = getInputValue(itemInput, itemDump);
+                    items[i] = newVal;
+                    await safeSetProperty(compUuid, `${basePath}.${i}`, { type: itemDump.type, value: newVal });
+                    propDump.value[i] = newVal;
+                    if (taowuMeta?.onCollectionChanged)
+                        await triggerCallbacks(compUuid, compIndex, propName);
+                };
+                if (_itemTag2 === 'ui-input') {
+                    itemInput.addEventListener('confirm', async (e) => { e.stopPropagation(); await onItemChange(); });
+                }
+                itemInput.addEventListener('change', onItemChange);
+            }
+            tableRow.appendChild(cell);
+            const tblDelBtn = createDelButton('×');
+            tblDelBtn.addEventListener('click', async () => {
+                if (!compUuid)
+                    return;
+                items.splice(i, 1);
+                if (compUuid === 'json-edit') {
+                    if (json_asset_renderer_1.jsonState.asset) {
+                        json_asset_renderer_1.jsonState.dirty = true;
+                        if (json_asset_renderer_1.jsonState.onDirty)
+                            json_asset_renderer_1.jsonState.onDirty();
+                    }
+                    propDump.value.length = 0;
+                    propDump.value.push(...items);
+                    updateHeader();
+                    renderItems();
+                    return;
+                }
+                await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
+                propDump.value = [...items];
+                updateHeader();
+                renderItems();
+                if (taowuMeta?.onCollectionChanged)
+                    await triggerCallbacks(compUuid, compIndex, propName);
+            });
+            tableRow.appendChild(tblDelBtn);
+            itemsContainer.appendChild(tableRow);
+        }
+        const headerEl = itemsContainer.querySelector('.taowu-table-header');
+        if (headerEl)
+            syncColumnWidths(headerEl, itemsContainer);
+    }
+    function updateHeader() { container.setAttribute('header', `${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${items.length})`); }
+    renderItems();
+    if (!compUuid) {
+        const addBtn = createAddButton('+ 添加元素');
+        addBtn.addEventListener('click', (e) => { e.stopPropagation(); });
+        content.appendChild(addBtn);
+        return container;
+    }
+    // json-edit: 仅当能推断默认值时才显示添加按钮
+    const isJsonEdit = compUuid === 'json-edit';
+    const elemType = propDump.elementTypeData?.type || '';
+    if (isJsonEdit && items.length === 0 && !canInferElementDefault(elemType, elementMetadata))
+        return container;
+    const addBtn = createAddButton('+ 添加元素');
+    addBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const newIdx = items.length;
+        if (items.length > 0) {
+            // 非空数组: 按现有逻辑用第一个元素做模板
+            const template = items[0];
+            let isCocosValue = false;
+            if (template && typeof template === 'object') {
+                const keys = Object.keys(template);
+                isCocosValue = (keys.includes('x') && keys.includes('y') && keys.includes('z')) || (keys.includes('r') && keys.includes('g') && keys.includes('b')) || (keys.includes('width') && keys.includes('height'));
+            }
+            if (isCocosValue) {
+                let itemType = 'cc.Vec3';
+                if (template.r !== undefined)
+                    itemType = 'cc.Color';
+                else if (template.width !== undefined)
+                    itemType = 'cc.Size';
+                else if (template.w !== undefined)
+                    itemType = 'cc.Vec4';
+                items.push(JSON.parse(JSON.stringify(template)));
+                if (compUuid !== 'json-edit') {
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
+                    await safeSetProperty(compUuid, `${basePath}.${newIdx}`, { type: itemType, value: JSON.parse(JSON.stringify(template)) });
+                }
+            }
+            else if (template && typeof template === 'object') {
+                const newObj = {};
+                for (const subKey of Object.keys(template)) {
+                    if (subKey === '_t') {
+                        newObj._t = template._t;
+                        continue;
+                    }
+                    let subVal = template[subKey];
+                    // 仅解包 IProperty 格式 (同时有 value 和 type)，不能误解包嵌套 CCClass (如 MapEntry 有 value 字段)
+                    if (subVal && typeof subVal === 'object' && subVal.value !== undefined && subVal.type !== undefined)
+                        subVal = subVal.value;
+                    newObj[subKey] = subVal;
+                }
+                items.push(newObj);
+                // json-edit: 修正嵌套字段默认值
+                if (compUuid === 'json-edit') {
+                    const _et = propDump.elementTypeData?.type || '';
+                    if (_et && !['Number', 'String', 'Boolean', 'Object'].includes(_et) && !_et.startsWith('cc.')) {
+                        await fixElementDefaults(newObj, _et, elementMetadata);
+                    }
+                }
+                if (compUuid !== 'json-edit') {
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
+                    // Cocos set-property 对自定义 CCClass 需要带 __type__ 的 dump
+                    const elemType = propDump.elementTypeData?.type || 'Object';
+                    const setDump = { type: elemType };
+                    // 自定义 CCClass 类型 (非基础类型、非 cc.*): 用 __type__ 让 Cocos 创建默认实例
+                    const _isCCClass = elemType && !['Number', 'String', 'Boolean', 'Object'].includes(elemType) && !elemType.startsWith('cc.');
+                    if (_isCCClass) {
+                        setDump.value = { __type__: elemType };
+                    }
+                    else {
+                        setDump.value = newObj;
+                    }
+                    await safeSetProperty(compUuid, `${basePath}.${newIdx}`, setDump);
+                }
+            }
+            else if (template != null) {
+                items.push(template);
+                if (compUuid !== 'json-edit') {
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
+                    await safeSetProperty(compUuid, `${basePath}.${newIdx}`, { type: typeof template === 'number' ? 'Number' : 'String', value: template });
+                }
+            }
+            else {
+                items.push(0);
+                if (compUuid !== 'json-edit')
+                    await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
+            }
+        }
+        else {
+            // 空数组: 根据元数据推断默认值
+            const inferred = inferElementDefault(elemType, elementMetadata);
+            const _isCC = elemType && !['Number', 'String', 'Boolean', 'Object'].includes(elemType) && !elemType.startsWith('cc.');
+            if (compUuid !== 'json-edit') {
+                // 组件路径: 用 __type__ 让 Cocos 创建默认实例
+                await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
+                if (_isCC) {
+                    await safeSetProperty(compUuid, `${basePath}.${newIdx}`, { type: elemType, value: { __type__: elemType } });
+                    // 等待 Cocos update() 刷新 dump 后 forceQuery 重新渲染
+                    await new Promise(r => setTimeout(r, 100));
+                    const contentEl = itemsContainer.closest('.taowu-content');
+                    if (contentEl?.__taowuRerender)
+                        await contentEl.__taowuRerender(undefined, undefined, true);
+                    return;
+                }
+            }
+            items.push(inferred ?? 0);
+            // json-edit: 先修正嵌套字段默认值，再渲染
+            if (compUuid === 'json-edit' && inferred && typeof inferred === 'object') {
+                await fixElementDefaults(inferred, elemType, elementMetadata);
+            }
+        }
+        if (compUuid === 'json-edit') {
+            if (json_asset_renderer_1.jsonState.asset) {
+                json_asset_renderer_1.jsonState.dirty = true;
+                if (json_asset_renderer_1.jsonState.onDirty)
+                    json_asset_renderer_1.jsonState.onDirty();
+            }
+            propDump.value.length = 0;
+            propDump.value.push(...items);
+        }
+        updateHeader();
+        renderItems();
+        if (taowuMeta?.onCollectionChanged)
+            await triggerCallbacks(compUuid, compIndex, propName);
+    });
+    content.appendChild(addBtn);
+    return container;
+}
+// ─── 字典 TableList ───
+function buildCleanDict(valueObj) {
+    const result = {};
+    for (const k in valueObj) {
+        const v = valueObj[k];
+        result[k] = (v && typeof v === 'object' && v.value !== undefined && v.type !== undefined) ? v.value : v;
+    }
+    return result;
+}
+function createDictTableElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta) {
+    const basePath = buildPath(propDump, compIndex, propName);
+    let valueObj = propDump.value || {};
+    let keys = Object.keys(valueObj);
+    const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`, propName);
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'taowu-collection-items';
+    content.appendChild(itemsContainer);
+    function renderItems() {
+        itemsContainer.innerHTML = '';
+        keys = Object.keys(valueObj);
+        const headerRow = document.createElement('div');
+        headerRow.className = 'taowu-table-row taowu-table-header';
+        const hIdx = document.createElement('span');
+        hIdx.className = 'taowu-table-index';
+        hIdx.textContent = '#';
+        headerRow.appendChild(hIdx);
+        const hKey = document.createElement('div');
+        hKey.className = 'taowu-table-cell';
+        hKey.textContent = 'Key';
+        headerRow.appendChild(hKey);
+        const hVal = document.createElement('div');
+        hVal.className = 'taowu-table-cell';
+        hVal.textContent = 'Value';
+        headerRow.appendChild(hVal);
+        const spacer = document.createElement('span');
+        spacer.className = 'taowu-table-index';
+        spacer.textContent = '';
+        headerRow.appendChild(spacer);
+        itemsContainer.appendChild(headerRow);
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            let val = valueObj[key];
+            let rawValDump = null;
+            if (val && typeof val === 'object' && val.value !== undefined && val.type !== undefined) {
+                rawValDump = val;
+                val = val.value;
+            }
+            const valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
+            const tableRow = document.createElement('div');
+            tableRow.className = 'taowu-table-row';
+            const indexSpan = document.createElement('span');
+            indexSpan.className = 'taowu-table-index';
+            indexSpan.textContent = String(i);
+            tableRow.appendChild(indexSpan);
+            const keyCell = document.createElement('div');
+            keyCell.className = 'taowu-table-cell';
+            const keyInput = document.createElement('ui-input');
+            keyInput.style.width = '100%';
+            try {
+                keyInput.value = key;
+            }
+            catch (e) { }
+            keyCell.appendChild(keyInput);
+            tableRow.appendChild(keyCell);
+            const valCell = document.createElement('div');
+            valCell.className = 'taowu-table-cell';
+            const valDump = { value: val, type: valType };
+            const valInput = createInputElement(valDump, undefined, compUuid, compIndex, propName, isRendering, true);
+            valCell.appendChild(valInput);
+            tableRow.appendChild(valCell);
+            ((k, ki) => {
+                ki.addEventListener('confirm', async (e) => {
+                    e.stopPropagation();
+                    const newKey = ki.value;
+                    if (newKey === k)
+                        return;
+                    if (valueObj[newKey] !== undefined) {
+                        console.error('[TaoWuInspector] 字典 key 已存在:', newKey);
+                        ki.value = k;
+                        return;
+                    }
+                    valueObj[newKey] = valueObj[k];
+                    delete valueObj[k];
+                    await Editor.Message.request('scene', 'execute-scene-script', { name: 'taowu-inspector', method: 'setDictValue', args: [compUuid, basePath, buildCleanDict(valueObj)] });
+                    renderItems();
+                });
+            })(key, keyInput);
+            ((k, vi, vd) => {
+                const isVi = vi.tagName.toLowerCase() === 'ui-input';
+                if (isVi) {
+                    vi.addEventListener('confirm', async (e) => {
+                        e.stopPropagation();
+                        const newVal = getInputValue(vi, vd);
+                        valueObj[k] = newVal;
+                        const setDump = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
+                        await safeSetProperty(compUuid, `${basePath}.${k}`, setDump);
+                    });
+                }
+                else {
+                    vi.addEventListener('change', async () => {
+                        if (isRendering && isRendering())
+                            return;
+                        const newVal = getInputValue(vi, vd);
+                        valueObj[k] = newVal;
+                        const setDump = rawValDump ? Object.assign({}, rawValDump, { value: newVal }) : { type: valType, value: newVal };
+                        await safeSetProperty(compUuid, `${basePath}.${k}`, setDump);
+                    });
+                }
+            })(key, valInput, valDump);
+            const delBtn = document.createElement('span');
+            delBtn.textContent = '×';
+            delBtn.style.cssText = 'flex:0 0 22px;width:22px;min-width:22px;max-width:22px;color:#c55;text-align:center;padding:2px 0;cursor:pointer;font-size:14px;user-select:none;overflow:visible;';
+            delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f77'; });
+            delBtn.addEventListener('mouseleave', () => { delBtn.style.color = '#c55'; });
+            ((k) => { delBtn.addEventListener('click', async () => { delete valueObj[k]; await Editor.Message.request('scene', 'execute-scene-script', { name: 'taowu-inspector', method: 'setDictValue', args: [compUuid, basePath, buildCleanDict(valueObj)] }); renderItems(); }); })(key);
+            tableRow.appendChild(delBtn);
+            itemsContainer.appendChild(tableRow);
+        }
+        const addRow = document.createElement('div');
+        addRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;';
+        const addKeyInput = document.createElement('ui-input');
+        addKeyInput.setAttribute('placeholder', '输入 Key');
+        addKeyInput.style.cssText = 'flex:1;min-width:0;';
+        addRow.appendChild(addKeyInput);
+        const addBtn = document.createElement('div');
+        addBtn.className = 'taowu-list-btn taowu-list-btn-add';
+        addBtn.textContent = '+ 添加';
+        addRow.appendChild(addBtn);
+        addBtn.addEventListener('click', async () => {
+            const newKey = addKeyInput.value;
+            if (!newKey)
+                return;
+            if (valueObj[newKey] !== undefined)
+                return;
+            const firstKey = Object.keys(valueObj)[0];
+            const defaultVal = firstKey !== undefined ? (typeof valueObj[firstKey] === 'number' ? 0 : '') : 0;
+            valueObj[newKey] = defaultVal;
+            await Editor.Message.request('scene', 'execute-scene-script', { name: 'taowu-inspector', method: 'setDictValue', args: [compUuid, basePath, buildCleanDict(valueObj)] });
+            addKeyInput.value = '';
+            renderItems();
+        });
+        itemsContainer.appendChild(addRow);
+        const headerEl = itemsContainer.querySelector('.taowu-table-header');
+        if (headerEl)
+            syncColumnWidths(headerEl, itemsContainer);
+    }
+    renderItems();
+    return container;
+}
+// ─── Map 渲染 ───
+function createMapElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata) {
+    const basePath = buildPath(propDump, compIndex, propName);
+    const valueObj = propDump.value || {};
+    const keys = Object.keys(valueObj);
+    const _elemTypeName = propDump.type;
+    let _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
+    const _classLabel = _elemMeta?.__class__?.labelText;
+    const { container, content } = createBoxContainer(`${_classLabel || propDump.displayName || _elemTypeName || toDisplayName(propName)} (${keys.length})`, propName);
+    if (_elemTypeName && Object.keys(_elemMeta).length === 0 && _elemTypeName !== 'Object' && !_elemTypeName.startsWith('cc.')) {
+        Editor.Message.request('taowu-inspector', 'query-taowu-metadata', _elemTypeName).then((em) => {
+            if (em) {
+                _elemMeta = em;
+                if (elementMetadata)
+                    elementMetadata[_elemTypeName] = em;
+                // 更新容器标题 (如果 taowuMeta 没有 labelText)
+                if (!taowuMeta?.labelText) {
+                    // 容器标题不需要变，保持属性名
+                }
+                // 重新渲染子属性标签以应用 LabelText (跳过 _t)
+                const renderKeys = keys.filter(k => k !== '_t');
+                const rows = content.querySelectorAll('.taowu-collection-row');
+                rows.forEach((row, idx) => {
+                    const rk = renderKeys[idx];
+                    if (rk && em[rk]?.labelText) {
+                        const label = row.querySelector('.taowu-collection-label');
+                        if (label)
+                            label.textContent = em[rk].labelText;
+                    }
+                });
+            }
+        }).catch(() => { });
+    }
+    for (const key of keys) {
+        const row = document.createElement('div');
+        row.className = 'taowu-collection-row';
+        const keyLabel = document.createElement('span');
+        keyLabel.className = 'taowu-collection-label';
+        keyLabel.textContent = _elemMeta[key]?.labelText || toDisplayName(key);
+        row.appendChild(keyLabel);
+        const valField = document.createElement('div');
+        valField.className = 'taowu-collection-field';
+        let val = valueObj[key];
+        let valType = 'String';
+        let rawSubDump = null;
+        if (val && typeof val === 'object' && val.value !== undefined && val.type !== undefined) {
+            valType = val.type;
+            val = val.value;
+            rawSubDump = valueObj[key];
+        }
+        else {
+            // 检测 Cocos 基础类型
+            if (val && typeof val === 'object' && !Array.isArray(val)) {
+                const vKeys = Object.keys(val);
+                if (vKeys.includes('x') && vKeys.includes('y') && vKeys.includes('z') && !vKeys.includes('w'))
+                    valType = 'cc.Vec3';
+                else if (vKeys.includes('x') && vKeys.includes('y') && vKeys.includes('z') && vKeys.includes('w'))
+                    valType = 'cc.Vec4';
+                else if (vKeys.includes('x') && vKeys.includes('y') && !vKeys.includes('z'))
+                    valType = 'cc.Vec2';
+                else if (vKeys.includes('r') && vKeys.includes('g') && vKeys.includes('b'))
+                    valType = 'cc.Color';
+                else if (vKeys.includes('width') && vKeys.includes('height'))
+                    valType = 'cc.Size';
+                else
+                    valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
+            }
+            else {
+                valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
+            }
+        }
+        // 跳过 _t 字段
+        if (key === '_t')
+            continue;
+        // 如果对象有 _t，用 _t 的值作为类型名
+        if (val && typeof val === 'object' && !Array.isArray(val) && val._t) {
+            valType = String(val._t);
+        }
+        if (val && typeof val === 'object' && !Array.isArray(val) && !valType.toLowerCase().startsWith('cc.') && Object.keys(val).length > 0) {
+            // 嵌套对象: 用 _t 类型对应的元数据渲染子属性，用父类属性元数据显示 label
+            const nestedTypeName = val._t ? String(val._t) : valType;
+            const nestedMeta = (elementMetadata && elementMetadata[nestedTypeName]) || {};
+            const nestedDump = rawSubDump || { value: val, type: valType, path: `${basePath}.${key}`, name: key };
+            // taowuMeta 用父类属性级别的元数据 (含 LabelText)，nestedMeta 用于内部子属性标签
+            valField.appendChild(createMapElement(nestedDump, compUuid, compIndex, key, isRendering, _elemMeta[key] || {}, elementMetadata));
+        }
+        else {
+            const valDump = { value: val, type: valType, _ownerType: _elemTypeName };
+            const valInput = createInputElement(valDump, _elemMeta[key], compUuid, compIndex, propName, isRendering, true);
+            valField.appendChild(valInput);
+            const subPath = (rawSubDump && rawSubDump.path) ? rawSubDump.path : `${basePath}.${key}`;
+            const isValInput = valInput.tagName.toLowerCase() === 'ui-input';
+            if (isValInput) {
+                valInput.addEventListener('confirm', async (e) => {
+                    e.stopPropagation();
+                    const newVal = getInputValue(valInput, valDump);
+                    valueObj[key] = newVal;
+                    const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: valType, value: newVal };
+                    await safeSetProperty(compUuid, subPath, setDump);
+                });
+            }
+            else {
+                valInput.addEventListener('change', async () => {
+                    if (isRendering && isRendering())
+                        return;
+                    const newVal = getInputValue(valInput, valDump);
+                    valueObj[key] = newVal;
+                    const setDump = rawSubDump ? Object.assign({}, rawSubDump, { value: newVal }) : { type: valType, value: newVal };
+                    await safeSetProperty(compUuid, subPath, setDump);
+                });
+            }
+        }
+        row.appendChild(valField);
+        content.appendChild(row);
     }
     return container;
 }
-/** 创建信息提示框 */
-function createInfoBoxElement(message, type) {
-    const box = document.createElement('div');
-    box.className = `taowu-infobox taowu-infobox-${type}`;
-    box.textContent = message;
-    return box;
+// ─── 事件监听 ───
+function setupChangeListener(input, propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged) {
+    const propPath = buildPath(propDump, compIndex, propName);
+    if (input.tagName.toLowerCase() === 'ui-prop') {
+        let lastValue = JSON.parse(JSON.stringify(propDump.value));
+        const handleChange = async () => {
+            if (isRendering && isRendering())
+                return;
+            await new Promise(r => requestAnimationFrame(r));
+            const newVal = input.dump ? input.dump.value : undefined;
+            if (newVal === undefined)
+                return;
+            if (JSON.stringify(newVal) === JSON.stringify(lastValue))
+                return;
+            lastValue = JSON.parse(JSON.stringify(newVal));
+            propDump.value = newVal;
+            if (compUuid === 'json-edit') {
+                if (json_asset_renderer_1.jsonState.asset) {
+                    syncJsonEditValue(json_asset_renderer_1.jsonState.asset, propDump, newVal);
+                    json_asset_renderer_1.jsonState.dirty = true;
+                    if (json_asset_renderer_1.jsonState.onDirty)
+                        json_asset_renderer_1.jsonState.onDirty();
+                    // 触发重新渲染以更新 ShowIf/HideIf 等条件
+                    const contentEl = input.closest('.json-asset-content');
+                    if (contentEl?.__taowuRerender)
+                        contentEl.__taowuRerender(propName, newVal);
+                }
+                return;
+            }
+            const result = await safeSetProperty(compUuid, propPath, { type: propDump.type, value: newVal });
+            if (result) {
+                const contentEl = input.closest('.taowu-content');
+                if (contentEl?.__taowuRerender)
+                    contentEl.__taowuRerender(propName, newVal);
+                if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged)
+                    await triggerCallbacks(compUuid, compIndex, propName);
+            }
+        };
+        input.addEventListener('change-dump', handleChange);
+        return;
+    }
+    const isSlider = input.tagName.toLowerCase() === 'ui-slider';
+    let lastWrittenValue = propDump.value;
+    const doSetProperty = async () => {
+        if (!compUuid)
+            return;
+        const newValue = getInputValue(input, propDump);
+        if (JSON.stringify(newValue) === JSON.stringify(lastWrittenValue))
+            return;
+        if (compUuid === 'json-edit') {
+            propDump.value = newValue;
+            lastWrittenValue = newValue;
+            if (json_asset_renderer_1.jsonState.asset) {
+                syncJsonEditValue(json_asset_renderer_1.jsonState.asset, propDump, newValue);
+                json_asset_renderer_1.jsonState.dirty = true;
+                if (json_asset_renderer_1.jsonState.onDirty)
+                    json_asset_renderer_1.jsonState.onDirty();
+                // 触发重新渲染以更新 ShowIf/HideIf 等条件
+                const contentEl = input.closest('.json-asset-content');
+                if (contentEl?.__taowuRerender)
+                    contentEl.__taowuRerender(propName, newValue);
+            }
+            return;
+        }
+        const result = await safeSetProperty(compUuid, propPath, { type: propDump.type, value: newValue });
+        if (!result) {
+            try {
+                setInputValue(input, propDump.value, propDump);
+            }
+            catch (e) { }
+        }
+        else {
+            propDump.value = newValue;
+            lastWrittenValue = newValue;
+        }
+        if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged)
+            await triggerCallbacks(compUuid, compIndex, propName);
+    };
+    const isInputLike = input.tagName.toLowerCase() === 'ui-input' || isSlider;
+    if (isInputLike)
+        input.addEventListener('confirm', (e) => { e.stopPropagation(); doSetProperty(); });
+    else
+        input.addEventListener('change', () => { doSetProperty(); });
+}
+/** 判断能否根据元数据推断数组元素的默认值 */
+function canInferElementDefault(elemType, elementMetadata) {
+    if (!elemType)
+        return true; // 无类型信息，用 0 作为默认值
+    if (['Number', 'String', 'Boolean'].includes(elemType))
+        return true;
+    if (['cc.Vec3', 'cc.Vec2', 'cc.Vec4', 'cc.Color', 'cc.Size'].includes(elemType))
+        return true;
+    if (elemType.startsWith('cc.'))
+        return true;
+    // 自定义类型: 检查是否有元数据
+    if (elementMetadata && elementMetadata[elemType])
+        return true;
+    return false;
+}
+/** 根据元数据推断数组元素的默认值 */
+function inferElementDefault(elemType, elementMetadata) {
+    if (!elemType)
+        return 0;
+    if (elemType === 'Number')
+        return 0;
+    if (elemType === 'String')
+        return '';
+    if (elemType === 'Boolean')
+        return false;
+    if (elemType === 'cc.Vec3')
+        return { x: 0, y: 0, z: 0 };
+    if (elemType === 'cc.Vec2')
+        return { x: 0, y: 0 };
+    if (elemType === 'cc.Vec4')
+        return { x: 0, y: 0, z: 0, w: 0 };
+    if (elemType === 'cc.Color')
+        return { r: 255, g: 255, b: 255, a: 255 };
+    if (elemType === 'cc.Size')
+        return { width: 0, height: 0 };
+    // 自定义类型: 根据元数据构建默认对象
+    const meta = elementMetadata?.[elemType];
+    if (meta) {
+        const obj = { _t: elemType };
+        for (const key of Object.keys(meta)) {
+            if (key === '_t' || key === '__class__')
+                continue;
+            const propMeta = meta[key];
+            if (propMeta?.button)
+                continue;
+            if (propMeta?.range)
+                obj[key] = propMeta.range.min;
+            else if (propMeta?.valueDropdown) {
+                const vd = propMeta.valueDropdown;
+                obj[key] = (vd.values && vd.values.length > 0) ? vd.values[0] : 0;
+            }
+            else if (propMeta?.tableList)
+                obj[key] = [];
+            else if (propMeta?.textarea)
+                obj[key] = '';
+            else
+                obj[key] = 0; // 未知类型默认 0, 后续异步修正
+        }
+        return obj;
+    }
+    return 0;
+}
+/** 异步修正自定义类型对象的字段默认值 (用 Cocos @property 类型信息) */
+async function fixElementDefaults(obj, elemType, elementMetadata) {
+    if (!obj || !elemType || elemType.startsWith('cc.') || ['Number', 'String', 'Boolean'].includes(elemType))
+        return false;
+    try {
+        const propTypes = await Editor.Message.request('taowu-inspector', 'query-class-property-types', elemType);
+        if (!propTypes)
+            return false;
+        let changed = false;
+        // 先补充 obj 中缺失的字段 (propTypes 中有但 obj 中没有的)
+        for (const key of Object.keys(propTypes)) {
+            if (key === '_t')
+                continue;
+            if (!(key in obj)) {
+                const pt = propTypes[key];
+                if (pt.isArray) {
+                    obj[key] = [];
+                    changed = true;
+                }
+                else if (pt.elementType && !['Number', 'String', 'Boolean'].includes(pt.elementType) && !pt.elementType.startsWith('cc.')) {
+                    obj[key] = { _t: pt.elementType };
+                    changed = true;
+                }
+                else if (pt.elementType === 'String') {
+                    obj[key] = '';
+                    changed = true;
+                }
+                else if (pt.elementType === 'Boolean') {
+                    obj[key] = false;
+                    changed = true;
+                }
+                else {
+                    obj[key] = 0;
+                    changed = true;
+                }
+            }
+        }
+        for (const key of Object.keys(obj)) {
+            if (key === '_t')
+                continue;
+            const pt = propTypes[key];
+            if (!pt)
+                continue;
+            if (pt.isArray) {
+                if (!Array.isArray(obj[key])) {
+                    obj[key] = [];
+                    changed = true;
+                }
+            }
+            else if (pt.elementType && !['Number', 'String', 'Boolean'].includes(pt.elementType) && !pt.elementType.startsWith('cc.')) {
+                if (typeof obj[key] !== 'object' || obj[key] === null) {
+                    obj[key] = inferElementDefault(pt.elementType, elementMetadata);
+                    if (obj[key] === 0)
+                        obj[key] = { _t: pt.elementType };
+                    changed = true;
+                }
+                // 递归修正嵌套对象的字段
+                if (obj[key] && typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
+                    const nestedChanged = await fixElementDefaults(obj[key], pt.elementType, elementMetadata);
+                    if (nestedChanged)
+                        changed = true;
+                }
+            }
+            else if (pt.elementType === 'String' && obj[key] === 0) {
+                obj[key] = '';
+                changed = true;
+            }
+            else if (pt.elementType === 'Boolean' && obj[key] === 0) {
+                obj[key] = false;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+    catch (e) {
+        return false;
+    }
 }

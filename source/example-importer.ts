@@ -34,9 +34,9 @@ export interface ITaoWuPropertyMeta {
 }
 
 export interface ITaoWuClassMeta {
-    [propertyKey: string]: ITaoWuPropertyMeta;
-}
-`
+            __class__?: { labelText?: string };
+            [propertyKey: string]: any;
+        }`
     },
     {
         fileName: "TaoWuRegistry.ts",
@@ -58,7 +58,16 @@ export class TaoWuRegistry {
         if (!classMeta[propertyKey]) {
             classMeta[propertyKey] = {};
         }
-        Object.assign(classMeta[propertyKey], meta);
+        Object.assign(classMeta[propertyKey] as any, meta);
+    }
+
+    static registerClass(className: string, meta: { labelText?: string }): void {
+        if (!this.metadata.has(className)) {
+            this.metadata.set(className, {});
+        }
+        const classMeta = this.metadata.get(className)!;
+        if (!classMeta.__class__) classMeta.__class__ = {};
+        Object.assign(classMeta.__class__, meta);
     }
 
     static getMetadata(className: string): ITaoWuClassMeta | null {
@@ -148,8 +157,13 @@ export function DisableIf(conditionProperty: string) {
 
 /** 自定义标签文本 */
 export function LabelText(text: string) {
-    return function (target: any, propertyKey: string) {
-        TaoWuRegistry.register(getClassName(target), propertyKey, { labelText: text });
+    return function (target: any, propertyKey?: string) {
+        if (propertyKey !== undefined) {
+            TaoWuRegistry.register(getClassName(target), propertyKey, { labelText: text });
+        } else {
+            const className = target.name || target.toString().match(/class\\s+(\\w+)/)?.[1] || '';
+            TaoWuRegistry.registerClass(className, { labelText: text });
+        }
     };
 }
 
@@ -266,7 +280,8 @@ import { TaoWuCompoent } from '../Runtime/TaoWuCompoent';
 const { ccclass, property } = _decorator;
 
 @ccclass('MapEntry')
-class MapEntry {
+@LabelText("字典条目")
+export class MapEntry {
     @property
     @LabelText("测试Key")
     key: string = '';
@@ -275,7 +290,8 @@ class MapEntry {
 }
 
 @ccclass('WeaponConfig')
-class WeaponConfig {
+@LabelText("武器配置")
+export class WeaponConfig {
     @property
     @LabelText("武器名称")
     weaponName: string = '';
@@ -312,7 +328,7 @@ class WeaponConfig {
 }
 
 @ccclass('SkillConfig')
-class SkillConfig {
+export class SkillConfig {
     @property
     @LabelText("技能名称")
     skillName: string = '';
@@ -687,6 +703,335 @@ export class TaoWuDemoComponent extends TaoWuCompoent {
     tableListDropdown: number[] = [5, 10, 15];
 }
 `
+    },
+    {
+        fileName: "TaoWuDemo.json",
+        content: `{
+    "_t": "TaoWuDemoConfig",
+    "componentName": "Demo",
+    "health": 100,
+    "moveSpeed": 5,
+    "jumpHeight": 3,
+    "flySpeed": 10,
+    "glideSpeed": 5,
+    "walkSpeed": 3,
+    "canFly": false,
+    "meleeDamage": 20,
+    "meleeRange": 2,
+    "rangedDamage": 15,
+    "attackRange": 50,
+    "magicDamage": 30,
+    "manaCost": 10,
+    "mainColor": { "r": 255, "g": 255, "b": 255, "a": 255 },
+    "accentColor": { "r": 100, "g": 149, "b": 237, "a": 255 },
+    "customSize": { "x": 1, "y": 1, "z": 1 },
+    "defaultScale": 1,
+    "customScale": 2,
+    "useDefaultSize": true,
+    "advancedEnabled": false,
+    "debugId": "AUTO_GENERATED",
+    "description": "配置描述",
+    "defaultList": [1, 2, 3],
+    "damageList": [10, 20, 30],
+    "positionList": [
+        { "x": 0, "y": 0, "z": 0 },
+        { "x": 1, "y": 1, "z": 1 }
+    ],
+    "configMap": [
+        { "_t": "MapEntry", "key": "attack", "value": 10 },
+        { "_t": "MapEntry", "key": "defense", "value": 5 }
+    ],
+    "configTableList": [
+        { "_t": "MapEntry", "key": "speed", "value": 8 },
+        { "_t": "MapEntry", "key": "luck", "value": 3 }
+    ],
+    "equippedWeapon": {
+        "_t": "WeaponConfig",
+        "weaponName": "初始武器",
+        "damage": 10,
+        "critRate": 0.05,
+        "elementType": "physical",
+        "durability": 50,
+        "rarity": 1,
+        "enchant": { "_t": "MapEntry", "key": "fire", "value": 5 }
+    },
+    "primarySkill": {
+        "_t": "SkillConfig",
+        "skillName": "基础攻击",
+        "cooldown": 1,
+        "manaCost": 0,
+        "level": 1,
+        "enabled": true,
+        "requiredWeapon": {
+            "_t": "WeaponConfig",
+            "weaponName": "无",
+            "damage": 0,
+            "critRate": 0,
+            "elementType": "none",
+            "durability": 0,
+            "rarity": 0,
+            "enchant": { "_t": "MapEntry", "key": "", "value": 0 }
+        }
+    },
+    "weaponInventory": [
+        {
+            "_t": "WeaponConfig",
+            "weaponName": "铁剑",
+            "damage": 10,
+            "critRate": 0,
+            "elementType": "physical",
+            "durability": 100,
+            "rarity": 0,
+            "enchant": { "_t": "MapEntry", "key": "", "value": 0 }
+        },
+        {
+            "_t": "WeaponConfig",
+            "weaponName": "冰霜弓",
+            "damage": 25,
+            "critRate": 0.1,
+            "elementType": "ice",
+            "durability": 80,
+            "rarity": 2,
+            "enchant": { "_t": "MapEntry", "key": "frost", "value": 3 }
+        }
+    ],
+    "skillList": [
+        {
+            "_t": "SkillConfig",
+            "skillName": "火球术",
+            "cooldown": 5,
+            "manaCost": 20,
+            "level": 3,
+            "enabled": true,
+            "requiredWeapon": {
+                "_t": "WeaponConfig",
+                "weaponName": "无",
+                "damage": 0,
+                "critRate": 0,
+                "elementType": "none",
+                "durability": 0,
+                "rarity": 0,
+                "enchant": { "_t": "MapEntry", "key": "", "value": 0 }
+            }
+        }
+    ],
+    "fibonacciChoice": 1,
+    "textureSize": 256,
+    "elementType": "fire"
+}`
+    },
+    {
+        fileName: "TaoWuDemoConfig.ts",
+        content: `import { _decorator, Component, Color, Vec3, CCInteger, CCString } from 'cc';
+const { ccclass, property } = _decorator;
+
+import { MapEntry, WeaponConfig, SkillConfig } from './TaoWuDemoComponent';
+
+import {
+    FoldoutGroup,
+    TabGroup,
+    BoxGroup,
+    ShowIf,
+    HideIf,
+    EnableIf,
+    DisableIf,
+    LabelText,
+    ReadOnly,
+    PropertyRange,
+    Title,
+    InfoBox,
+    PropertyOrder,
+    TextArea,
+    TableList,
+    ValueDropdown
+} from '../Runtime/TaoWuDecorators';
+
+@ccclass('TaoWuDemoConfig')
+export class TaoWuDemoConfig {
+    @property
+    componentName: string = 'Demo';
+
+    @property
+    @PropertyRange(0, 100)
+    health: number = 100;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @LabelText("移动速度")
+    moveSpeed: number = 5;
+
+    @property
+    @FoldoutGroup('角色设置')
+    jumpHeight: number = 3;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @ShowIf('canFly')
+    flySpeed: number = 10;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @EnableIf('canFly')
+    glideSpeed: number = 5;
+
+    @property
+    @FoldoutGroup('角色设置')
+    @DisableIf('canFly')
+    walkSpeed: number = 3;
+
+    @property
+    @FoldoutGroup('角色设置')
+    canFly: boolean = false;
+
+    @property
+    @BoxGroup('外观设置')
+    mainColor: Color = new Color(255, 255, 255, 255);
+
+    @property
+    @BoxGroup('外观设置')
+    accentColor: Color = new Color(100, 149, 237, 255);
+
+    @property
+    @BoxGroup('外观设置')
+    @HideIf('useDefaultSize')
+    customSize: Vec3 = new Vec3(1, 1, 1);
+
+    @property
+    @BoxGroup('外观设置')
+    @EnableIf('useDefaultSize')
+    defaultScale: number = 1;
+
+    @property
+    @BoxGroup('外观设置')
+    @DisableIf('useDefaultSize')
+    customScale: number = 2;
+
+    @property
+    @BoxGroup('外观设置')
+    useDefaultSize: boolean = true;
+
+    @property
+    @Title('高级设置', true)
+    @InfoBox('以下属性影响配置核心逻辑，请谨慎修改', 'warning')
+    advancedEnabled: boolean = false;
+
+    @property
+    @ReadOnly()
+    @PropertyOrder(100)
+    debugId: string = 'AUTO_GENERATED';
+
+    @property
+    @TextArea()
+    @FoldoutGroup('角色设置')
+    description: string = '配置描述';
+
+    // ─── TabGroup 测试 ───
+    @property
+    @TabGroup('武器配置', '近战')
+    @LabelText("近战伤害")
+    meleeDamage: number = 20;
+
+    @property
+    @TabGroup('武器配置', '近战')
+    @LabelText("近战范围")
+    meleeRange: number = 2;
+
+    @property
+    @TabGroup('武器配置', '远程')
+    @LabelText("远程伤害")
+    rangedDamage: number = 15;
+
+    @property
+    @TabGroup('武器配置', '远程')
+    @PropertyRange(1, 100)
+    @LabelText("攻击距离")
+    attackRange: number = 50;
+
+    @property
+    @TabGroup('武器配置', '魔法')
+    @LabelText("魔法伤害")
+    magicDamage: number = 30;
+
+    @property
+    @TabGroup('武器配置', '魔法')
+    @LabelText("法力消耗")
+    manaCost: number = 10;
+
+    @property([CCInteger])
+    @FoldoutGroup('列表与字典')
+    defaultList: number[] = [1, 2, 3];
+
+    @property([CCInteger])
+    @TableList()
+    @FoldoutGroup('列表与字典')
+    damageList: number[] = [10, 20, 30];
+
+    @property([Vec3])
+    @TableList()
+    @FoldoutGroup('列表与字典')
+    positionList: Vec3[] = [new Vec3(0, 0, 0), new Vec3(1, 1, 1)];
+
+    @property({ type: [MapEntry] })
+    @FoldoutGroup('列表与字典')
+    configMap: MapEntry[] = [
+        (() => { const e = new MapEntry(); e.key = 'attack'; e.value = 10; return e; })(),
+        (() => { const e = new MapEntry(); e.key = 'defense'; e.value = 5; return e; })(),
+    ];
+
+    @property({ type: [MapEntry] })
+    @TableList()
+    @FoldoutGroup('列表与字典')
+    configTableList: MapEntry[] = [
+        (() => { const e = new MapEntry(); e.key = 'speed'; e.value = 8; return e; })(),
+        (() => { const e = new MapEntry(); e.key = 'luck'; e.value = 3; return e; })(),
+    ];
+
+    @property({ type: WeaponConfig })
+    @FoldoutGroup('嵌套对象')
+    equippedWeapon: WeaponConfig = (() => { const w = new WeaponConfig(); w.weaponName = '初始武器'; w.damage = 10; w.critRate = 0.05; w.elementType = 'physical'; w.durability = 50; return w; })();
+
+    @property({ type: SkillConfig })
+    @FoldoutGroup('嵌套对象')
+    primarySkill: SkillConfig = (() => { const s = new SkillConfig(); s.skillName = '基础攻击'; s.cooldown = 1; s.manaCost = 0; s.level = 1; s.enabled = true; return s; })();
+
+    @property({ type: [WeaponConfig] })
+    @TableList()
+    @FoldoutGroup('嵌套列表')
+    weaponInventory: WeaponConfig[] = [
+        (() => { const w = new WeaponConfig(); w.weaponName = '铁剑'; w.damage = 10; w.elementType = 'physical'; w.rarity = 0; return w; })(),
+        (() => { const w = new WeaponConfig(); w.weaponName = '冰霜弓'; w.damage = 25; w.elementType = 'ice'; w.rarity = 2; return w; })(),
+    ];
+
+    @property({ type: [SkillConfig] })
+    @TableList()
+    @FoldoutGroup('嵌套列表')
+    skillList: SkillConfig[] = [
+        (() => { const s = new SkillConfig(); s.skillName = '火球术'; s.cooldown = 5; s.manaCost = 20; s.level = 3; s.enabled = true; return s; })(),
+        (() => { const s = new SkillConfig(); s.skillName = '治疗术'; s.cooldown = 10; s.manaCost = 30; s.level = 2; s.enabled = true; return s; })(),
+    ];
+
+    @property
+    @ValueDropdown([1, 2, 3, 5, 8, 13], ['一', '二', '三', '五', '八', '十三'])
+    @FoldoutGroup('ValueDropdown 测试')
+    fibonacciChoice: number = 1;
+
+    @property
+    @ValueDropdown('getTextureSizes')
+    @FoldoutGroup('ValueDropdown 测试')
+    textureSize: number = 256;
+
+    getTextureSizes() {
+        return [32, 64, 128, 256, 512, 1024];
+    }
+
+    @property
+    @ValueDropdown('StaticElementTypes', ['火', '冰', '雷', '毒'])
+    @FoldoutGroup('ValueDropdown 测试')
+    elementType: string = 'fire';
+
+    static StaticElementTypes = ['fire', 'ice', 'lightning', 'poison'];
+}
+`
     }
 ];
 
@@ -761,7 +1106,7 @@ export class ExampleImporter {
         await ExampleImporter.openSceneAndAddNode(sceneInfo.uuid);
 
         Editor.Dialog.info("示例导入完成", {
-            detail: "已创建 assets/TaoWuInspector/Example 目录，包含:\n• TaoWuDemoComponent.ts\n• TaoWuDemo.scene\n\n请选中场景中的节点查看 Inspector 效果。",
+            detail: "已创建 assets/TaoWuInspector/Example 目录，包含:\n• TaoWuDemoComponent.ts\n• TaoWuDemo.scene\n• TaoWuDemo.json\n\n选中场景节点查看 Inspector 效果，选中 .json 文件查看 JSON 渲染。",
             buttons: ["确定"],
         });
         console.log("[TaoWuInspector] 示例导入完成");
