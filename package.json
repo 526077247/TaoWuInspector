@@ -21,7 +21,7 @@
         "inspector": {
             "section": {
                 "node": {
-                    "TaoWuDemoComponent": "./dist/inspector/taowu-renderer.js"
+                    "TaoWuCompoent": "./dist/inspector/taowu-renderer.js"
                 }
             }
         },

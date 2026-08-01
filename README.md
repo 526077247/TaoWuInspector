@@ -27,7 +27,24 @@
 
 ## 快速开始
 
-### 1. 导入装饰器
+### 1. 继承 TaoWuCompoent 基类
+
+Runtime 导入后会生成 `TaoWuCompoent.ts`，这是一个继承自 `Component` 的基础类。所有需要使用 TaoWu Inspector 面板的组件只需继承它：
+
+```typescript
+import { _decorator, Color } from 'cc';
+import { TaoWuCompoent } from '../Runtime/TaoWuCompoent';
+const { ccclass, property } = _decorator;
+
+@ccclass('MyComponent')
+export class MyComponent extends TaoWuCompoent {
+    // ...
+}
+```
+
+> `TaoWuCompoent` 已在 `package.json` 的 `inspector.section.node` 中注册，继承它的组件会自动使用 TaoWu 自定义 Inspector 面板。如需为其他组件也启用，可在 `package.json` 中追加注册组件名。
+
+### 2. 导入装饰器
 
 ```typescript
 import {
@@ -51,11 +68,11 @@ import {
 } from '../Runtime/TaoWuDecorators';
 ```
 
-### 2. 在组件中使用装饰器
+### 3. 在组件中使用装饰器
 
 ```typescript
 @ccclass('MyComponent')
-export class MyComponent extends Component {
+export class MyComponent extends TaoWuCompoent {
 
     @property
     @FoldoutGroup('基础设置')
@@ -98,24 +115,6 @@ export class MyComponent extends Component {
     @Title('高级设置', true)
     @InfoBox('以下属性影响游戏核心逻辑，请谨慎修改', 'warning')
     advancedEnabled: boolean = false;
-}
-```
-
-### 3. 注册自定义 Inspector
-
-在 `extensions/taowu-inspector/package.json` 的 `contributions.inspector.section.node` 中注册组件名：
-
-```json
-{
-    "contributions": {
-        "inspector": {
-            "section": {
-                "node": {
-                    "MyComponent": "./dist/inspector/taowu-renderer.js"
-                }
-            }
-        }
-    }
 }
 ```
 
@@ -422,7 +421,8 @@ assets/TaoWuInspector/
 ├── Runtime/              # 运行时脚本（由扩展导入）
 │   ├── TaoWuTypes.ts    # 类型定义
 │   ├── TaoWuRegistry.ts # 元数据注册中心
-│   └── TaoWuDecorators.ts # 装饰器
+│   ├── TaoWuDecorators.ts # 装饰器
+│   └── TaoWuCompoent.ts # 基础组件类（继承后自动启用 TaoWu Inspector）
 └── Example/              # 示例（由扩展导入）
     ├── TaoWuDemoComponent.ts
     └── TaoWuDemo.scene

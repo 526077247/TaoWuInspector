@@ -243,6 +243,17 @@ export function ValueDropdown(values: string | (number | string)[], labels?: str
     };
 }
 `
+    },
+    {
+        fileName: "TaoWuCompoent.ts",
+        content: `import { _decorator, Component } from 'cc';
+const { ccclass } = _decorator;
+
+/** TaoWu Inspector 基础组件类 — 继承此类的组件将使用 TaoWu 自定义 Inspector 面板 */
+@ccclass('TaoWuCompoent')
+export class TaoWuCompoent extends Component {
+}
+`
     }
 ];
 
@@ -250,7 +261,8 @@ export function ValueDropdown(values: string | (number | string)[], labels?: str
 const EXAMPLE_TEMPLATES: { fileName: string; content: string }[] = [
     {
         fileName: "TaoWuDemoComponent.ts",
-        content: `import { _decorator, Component, Color, Vec3, CCInteger, CCString } from 'cc';
+        content: `import { _decorator, Color, Vec3, CCInteger, CCString } from 'cc';
+import { TaoWuCompoent } from '../Runtime/TaoWuCompoent';
 const { ccclass, property } = _decorator;
 
 @ccclass('MapEntry')
@@ -345,7 +357,7 @@ import {
 } from '../Runtime/TaoWuDecorators';
 
 @ccclass('TaoWuDemoComponent')
-export class TaoWuDemoComponent extends Component {
+export class TaoWuDemoComponent extends TaoWuCompoent {
 
     // ─── 基础属性 (无分组) ───
     @property
@@ -699,9 +711,10 @@ export class ExampleImporter {
 
         console.log("[TaoWuInspector] 等待脚本编译...");
         await ExampleImporter.waitFileReady(`${RUNTIME_DIR}/TaoWuDecorators.ts`);
+        await ExampleImporter.waitFileReady(`${RUNTIME_DIR}/TaoWuCompoent.ts`);
 
         Editor.Dialog.info("Runtime 导入完成", {
-            detail: "已创建 assets/TaoWuInspector/Runtime 目录，包含:\n• TaoWuTypes.ts\n• TaoWuRegistry.ts\n• TaoWuDecorators.ts",
+            detail: "已创建 assets/TaoWuInspector/Runtime 目录，包含:\n• TaoWuTypes.ts\n• TaoWuRegistry.ts\n• TaoWuDecorators.ts\n• TaoWuCompoent.ts",
             buttons: ["确定"],
         });
         console.log("[TaoWuInspector] Runtime 导入完成");
