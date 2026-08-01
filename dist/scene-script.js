@@ -112,6 +112,12 @@ exports.methods = {
         if (!comp) {
             comp = findComponentByUuid(scene, uuid);
         }
+        // 支持 "ClassName.staticMethod" 格式
+        if (methodName.includes('.')) {
+            const result = findMember(null, methodName);
+            if (result !== undefined)
+                return result;
+        }
         if (comp && typeof comp[methodName] === 'function') {
             try {
                 return await comp[methodName]();
@@ -120,13 +126,39 @@ exports.methods = {
                 console.error('[TaoWuInspector] invokeMethod error:', e);
             }
         }
+        // 在嵌套对象中查找
+        if (comp) {
+            for (const key of Object.keys(comp)) {
+                if (key.startsWith('_'))
+                    continue;
+                const nested = comp[key];
+                if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+                    if (typeof nested[methodName] === 'function') {
+                        try {
+                            return await nested[methodName]();
+                        }
+                        catch (e) { /* ignore */ }
+                    }
+                }
+                if (Array.isArray(nested)) {
+                    for (const item of nested) {
+                        if (item && typeof item === 'object' && typeof item[methodName] === 'function') {
+                            try {
+                                return await item[methodName]();
+                            }
+                            catch (e) { /* ignore */ }
+                        }
+                    }
+                }
+            }
+        }
         return null;
     },
     /**
-     * 获取组件当前属性值 (用于 Button 执行后刷新面板)
-     * propKeys: 需要查询的属性名列表 (来自 Inspector dump)
+     * 解析 ValueDropdown 的 memberName (方法名或字段名)
+     * 返回可选值数组
      */
-    async getComponentDump(uuid, compIndex, propKeys) {
+    async resolveValueDropdown(uuid, compIndex, memberName) {
         const cc = globalThis.cc;
         if (!cc || !cc.director)
             return null;
@@ -143,19 +175,91 @@ exports.methods = {
         }
         if (!comp)
             return null;
-        const result = {};
-        for (const key of propKeys) {
-            try {
-                const val = comp[key];
-                if (val !== undefined) {
-                    result[key] = val;
+        // 1. 优先在组件实例上查找
+        const found = findMember(comp, memberName);
+        if (found !== undefined)
+            return found;
+        // 2. 在组件的所有嵌套属性中查找 (嵌套 class)
+        for (const key of Object.keys(comp)) {
+            if (key.startsWith('_'))
+                continue;
+            const nested = comp[key];
+            if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+                const nestedFound = findMember(nested, memberName);
+                if (nestedFound !== undefined)
+                    return nestedFound;
+                // 再深一层
+                for (const k2 of Object.keys(nested)) {
+                    if (k2.startsWith('_'))
+                        continue;
+                    const nested2 = nested[k2];
+                    if (nested2 && typeof nested2 === 'object' && !Array.isArray(nested2)) {
+                        const found2 = findMember(nested2, memberName);
+                        if (found2 !== undefined)
+                            return found2;
+                    }
                 }
             }
-            catch (e) { }
+            // 数组中的嵌套对象
+            if (Array.isArray(nested)) {
+                for (const item of nested) {
+                    if (item && typeof item === 'object') {
+                        const arrFound = findMember(item, memberName);
+                        if (arrFound !== undefined)
+                            return arrFound;
+                    }
+                }
+            }
         }
-        return result;
+        return null;
     }
 };
+/** 在对象上查找成员 (方法或字段)，返回结果或 undefined
+ *  支持 "ClassName.staticMethodName" 格式直接索引类的静态方法/字段
+ */
+function findMember(obj, memberName) {
+    // 支持 "ClassName.staticMethod" 格式 — 不需要 obj
+    if (memberName.includes('.')) {
+        const parts = memberName.split('.');
+        const className = parts[0];
+        const member = parts.slice(1).join('.');
+        const cc = globalThis.cc;
+        if (cc && cc.js) {
+            const cls = cc.js.getClassByName(className);
+            if (cls) {
+                if (typeof cls[member] === 'function') {
+                    try {
+                        return cls[member]();
+                    }
+                    catch (e) { /* ignore */ }
+                }
+                if (cls[member] !== undefined && Array.isArray(cls[member])) {
+                    return cls[member];
+                }
+            }
+        }
+        return undefined;
+    }
+    if (!obj || typeof obj !== 'object')
+        return undefined;
+    // 实例方法
+    if (typeof obj[memberName] === 'function') {
+        try {
+            return obj[memberName]();
+        }
+        catch (e) { /* ignore */ }
+    }
+    // 实例字段
+    if (obj[memberName] !== undefined && Array.isArray(obj[memberName])) {
+        return obj[memberName];
+    }
+    // 静态字段
+    const ctor = obj.constructor;
+    if (ctor && ctor[memberName] !== undefined && Array.isArray(ctor[memberName])) {
+        return ctor[memberName];
+    }
+    return undefined;
+}
 function triggerCallbacks(comp, propName) {
     const registry = globalThis.__TAOWU_REGISTRY__;
     if (!registry)

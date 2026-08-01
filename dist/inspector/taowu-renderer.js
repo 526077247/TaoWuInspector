@@ -619,15 +619,30 @@ function update(dump) {
                 this.taowuMetadata = meta || {};
                 this.metadataLoading = false;
                 this.metaQueryResult = 'resolved';
-                // 获取数组元素类型的元数据 (如 MapEntry)
+                // 获取数组元素类型和嵌套对象类型的元数据
                 this.elementMetadata = {};
+                const queriedTypes = new Set();
                 const props = (0, taowu_utils_1.getProperties)(this.dump);
-                for (const [_k, pd] of props) {
+                const queue = [...props];
+                while (queue.length > 0) {
+                    const [_k, pd] = queue.shift();
+                    // 数组元素类型
                     const et = pd.elementTypeData?.type;
-                    if (et && !et.startsWith('cc.') && !this.elementMetadata[et]) {
+                    if (et && !et.startsWith('cc.') && !queriedTypes.has(et)) {
+                        queriedTypes.add(et);
                         try {
                             const em = await Editor.Message.request('taowu-inspector', 'query-taowu-metadata', et);
                             this.elementMetadata[et] = em || {};
+                        }
+                        catch (e) { }
+                    }
+                    // 嵌套对象类型 (非数组)
+                    const pt = pd.type;
+                    if (pt && !pt.startsWith('cc.') && pt !== 'Number' && pt !== 'String' && pt !== 'Boolean' && !queriedTypes.has(pt)) {
+                        queriedTypes.add(pt);
+                        try {
+                            const em = await Editor.Message.request('taowu-inspector', 'query-taowu-metadata', pt);
+                            this.elementMetadata[pt] = em || {};
                         }
                         catch (e) { }
                     }

@@ -44,6 +44,9 @@
             "query-taowu-metadata": {
                 "methods": ["queryTaoWuMetadata"]
             },
+            "resolve-value-dropdown": {
+                "methods": ["resolveValueDropdown"]
+            },
             "installRuntime": {
                 "methods": ["installRuntime"]
             },

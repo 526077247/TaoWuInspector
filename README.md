@@ -16,6 +16,7 @@
 - 🗂️ **字典表格** — 对 `{ [key: string]: V }` 类型使用 TableList 渲染为 Key-Value 表格
 - 🔁 **排序** — PropertyOrder 控制属性渲染顺序
 - 🔘 **方法按钮** — Button 在 Inspector 中生成按钮，点击调用组件方法
+- 📋 **值下拉选择** — ValueDropdown 为 number/string 属性提供下拉选择框，支持直接值、方法名、类名.静态方法名
 - 🧩 **嵌套对象** — 支持自定义 class 的嵌套属性渲染
 
 ## 安装
@@ -45,7 +46,8 @@ import {
     PropertyOrder,
     TextArea,
     TableList,
-    Button
+    Button,
+    ValueDropdown
 } from '../Runtime/TaoWuDecorators';
 ```
 
@@ -153,6 +155,92 @@ export class MyComponent extends Component {
 | `@PropertyRange(min, max)` | `min: number`<br>`max: number` | 将数字属性渲染为滑块 |
 | `@TextArea()` | 无 | 将字符串属性渲染为多行文本框 |
 | `@PropertyOrder(order)` | `order: number` — 排序值 | 控制属性渲染顺序（值大的在后） |
+
+### 值下拉选择
+
+| 装饰器 | 参数 | 说明 |
+|--------|------|------|
+| `@ValueDropdown(values, labels?)` | `values: (number\|string)[]` 或 `string`（方法名/字段名）<br>`labels?: string[]` — 可选标签 | 将 number/string 属性渲染为下拉选择框 |
+
+**三种用法：**
+
+```typescript
+// 1. 直接值数组 + 标签
+@property
+@ValueDropdown([1, 2, 3, 5, 8, 13], ['一', '二', '三', '五', '八', '十三'])
+@FoldoutGroup('ValueDropdown')
+fibonacciChoice: number = 1;
+
+// 2. 方法名 — 运行时调用组件实例方法获取可选值
+@property
+@ValueDropdown('getTextureSizes')
+@FoldoutGroup('ValueDropdown')
+textureSize: number = 256;
+
+getTextureSizes() {
+    return [32, 64, 128, 256, 512, 1024];
+}
+
+// 3. 类名.静态方法名 — 直接索引类的静态方法/字段
+@property
+@ValueDropdown('WeaponConfig.getRarityOptions')
+@FoldoutGroup('ValueDropdown')
+rarity: number = 1;
+
+// 也可用于静态字段
+@property
+@ValueDropdown('TaoWuDemoComponent.StaticElementTypes', ['火', '冰', '雷', '毒'])
+@FoldoutGroup('ValueDropdown')
+elementType: string = 'fire';
+
+static StaticElementTypes = ['fire', 'ice', 'lightning', 'poison'];
+```
+
+**方法返回值支持格式：**
+- `(number | string)[]` — 纯值数组
+- `{ value: number | string, label: string }[]` — 带标签的对象数组
+
+```typescript
+// 返回带标签的选项
+getRarityOptions() {
+    return [
+        { value: 0, label: '普通' },
+        { value: 1, label: '精良' },
+        { value: 2, label: '史诗' },
+        { value: 3, label: '传说' },
+    ];
+}
+```
+
+**在数组和嵌套对象中使用：**
+
+```typescript
+// 数组中每个元素使用下拉选择
+@property([CCInteger])
+@ValueDropdown([10, 20, 30, 50, 100], ['十个', '二十', '三十', '五十', '一百'])
+dropdownDamageList: number[] = [10, 20, 30];
+
+// TableList 中的自定义类内部字段使用下拉选择
+@ccclass('WeaponConfig')
+class WeaponConfig {
+    @property
+    @ValueDropdown(['physical', 'fire', 'ice', 'lightning'], ['物理', '火', '冰', '雷'])
+    elementType: string = 'physical';
+
+    @property
+    @ValueDropdown('WeaponConfig.getRarityOptions')
+    rarity: number = 1;
+
+    static getRarityOptions() {
+        return [
+            { value: 0, label: '普通' },
+            { value: 1, label: '精良' },
+        ];
+    }
+}
+```
+
+> `@ValueDropdown` 仅适用于 `number` 和 `string` 基本类型属性，不适用于自定义 class 对象。在数组/嵌套对象中使用时，每个 number/string 元素会渲染为独立的下拉框。
 
 ### 回调类
 

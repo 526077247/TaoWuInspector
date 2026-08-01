@@ -132,9 +132,10 @@ function createPropertyElement(propName, propDump, compUuid, compIndex, taowuMet
         wrapper.appendChild(infoEl);
     }
     const input = createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering, false, elementMetadata);
-    // ui-prop 需要在 DOM 挂载后重新设置 dump 并 render
+    // ui-prop[type="dump"] 需要在 DOM 挂载后重新设置 dump 并 render
+    // 但 ValueDropdown 的 ui-prop 不需要 render (手动放了 ui-select)
     const tagName = input.tagName.toLowerCase();
-    if (tagName === 'ui-prop') {
+    if (tagName === 'ui-prop' && input.getAttribute('type') === 'dump' && !input.hasAttribute('data-value-dropdown')) {
         const isReadOnly = taowuMeta?.readOnly || propDump.readonly || !(0, taowu_utils_1.evaluateEnabled)(taowuMeta, properties);
         requestAnimationFrame(() => {
             try {
@@ -145,16 +146,16 @@ function createPropertyElement(propName, propDump, compUuid, compIndex, taowuMet
                 input.render(input.dump);
             }
             catch (e) { }
-            // render 后设置 disabled，防止 render() 清除
             if (isReadOnly) {
                 input.setAttribute('disabled', '');
             }
         });
     }
     wrapper.appendChild(input);
-    // List/TableList/Map 自带事件监听，跳过常规 setupChangeListener
+    // List/TableList/Map/ValueDropdown 自带事件监听，跳过常规 setupChangeListener
     const isContainer = input.classList.contains('taowu-collection');
-    if (!isContainer) {
+    const isValueDropdown = input.hasAttribute('data-value-dropdown');
+    if (!isContainer && !isValueDropdown) {
         setupChangeListener(input, propName, propDump, compUuid, compIndex, taowuMeta, isRendering, onPropChanged);
     }
     return wrapper;
@@ -199,7 +200,7 @@ function createDelButton(text) {
 function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering, rawElement, elementMetadata) {
     const type = (propDump.type || '').toLowerCase();
     const value = propDump.value;
-    // Array — List 或 TableList (必须在 cc.* 类型检查之前)
+    // Array — List 或 TableList (必须在 ValueDropdown 之前，数组走 List 渲染)
     if (propDump.isArray || Array.isArray(value)) {
         if (taowuMeta?.tableList) {
             return createTableListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
@@ -213,6 +214,14 @@ function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, 
         }
         return createListElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
+    // rawElement: 用于 List/TableList/Map 内部元素
+    if (rawElement) {
+        return createRawInputElement(propDump, taowuMeta, compUuid, compIndex);
+    }
+    // ValueDropdown — 下拉选择框 (仅在非数组、非 rawElement 时生效)
+    if (taowuMeta?.valueDropdown) {
+        return createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering);
+    }
     // Object/Map — 非 cc.* 类型的对象且有实际属性
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
         && !type.startsWith('cc.') && Object.keys(value).length > 0) {
@@ -221,18 +230,19 @@ function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, 
         }
         return createMapElement(propDump, compUuid, compIndex, propName, isRendering, taowuMeta, elementMetadata);
     }
-    // rawElement: 用于 List/TableList/Map 内部元素，不使用 ui-prop
-    if (rawElement) {
-        return createRawInputElement(propDump, taowuMeta);
-    }
     // 所有简单类型 (Number, String, Boolean, Enum, Vec, Color, Size, Asset, Node 等)
     // 统一使用 ui-prop + dump，让 Cocos 原生渲染 label 和输入框，确保对齐
     const prop = document.createElement('ui-prop');
     prop.setAttribute('type', 'dump');
     // 克隆 dump 并应用自定义元数据
     const dumpCopy = Object.assign({}, propDump);
+    // 应用标签: 优先 labelText，否则用 toDisplayName 转大驼峰
     if (taowuMeta?.labelText) {
         dumpCopy.displayName = taowuMeta.labelText;
+    }
+    else {
+        const baseName = propDump.name || propName;
+        dumpCopy.displayName = toDisplayName(baseName);
     }
     if (taowuMeta?.readOnly) {
         dumpCopy.readonly = true;
@@ -251,10 +261,146 @@ function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, 
     catch (e) { }
     return prop;
 }
+// ─── ValueDropdown 渲染 ───
+function createValueDropdownElement(propDump, taowuMeta, compUuid, compIndex, propName, isRendering) {
+    const vd = taowuMeta.valueDropdown;
+    const propPath = buildPath(propDump, compIndex, propName);
+    const isNumber = (propDump.type || '').toLowerCase() === 'number';
+    // 使用 ui-prop[type="dump"] + enumList 让 Cocos 原生渲染 label + select
+    const prop = document.createElement('ui-prop');
+    prop.setAttribute('type', 'dump');
+    prop.setAttribute('data-value-dropdown', '');
+    const dumpCopy = Object.assign({}, propDump);
+    const labelText = taowuMeta.labelText || propDump.displayName || toDisplayName(propName);
+    dumpCopy.displayName = labelText;
+    if (taowuMeta.readOnly)
+        dumpCopy.readonly = true;
+    try {
+        prop.dump = dumpCopy;
+    }
+    catch (e) { }
+    function applyEnumList(values, labels) {
+        dumpCopy.enumList = values.map((v, i) => ({
+            value: v,
+            name: labels && labels[i] ? labels[i] : String(v),
+        }));
+        dumpCopy.value = isNumber ? Number(propDump.value) : propDump.value;
+        // Cocos 需要 type 为 "Enum" 才会渲染 ui-select
+        dumpCopy.type = 'Enum';
+        try {
+            prop.dump = dumpCopy;
+        }
+        catch (e) { }
+        requestAnimationFrame(() => {
+            try {
+                prop.render(dumpCopy);
+            }
+            catch (e) { }
+            if (taowuMeta.readOnly)
+                prop.setAttribute('disabled', '');
+        });
+    }
+    function setupEnumChange() {
+        prop.addEventListener('confirm', async (e) => {
+            e.stopPropagation();
+            const newVal = prop.dump ? prop.dump.value : undefined;
+            if (newVal === undefined)
+                return;
+            const typedVal = isNumber ? Number(newVal) : newVal;
+            propDump.value = typedVal;
+            await Editor.Message.request('scene', 'set-property', {
+                uuid: compUuid, path: propPath,
+                dump: { type: propDump.type, value: typedVal },
+            });
+        });
+    }
+    if (vd.values) {
+        applyEnumList(vd.values, vd.labels);
+        setupEnumChange();
+    }
+    else if (vd.memberName) {
+        // 先用空 enumList render 占位
+        applyEnumList([], []);
+        setupEnumChange();
+        Editor.Message.request('taowu-inspector', 'resolve-value-dropdown', compUuid, compIndex, vd.memberName)
+            .then((result) => {
+            let values = [];
+            let labels;
+            if (Array.isArray(result)) {
+                if (result.length > 0 && typeof result[0] === 'object' && result[0].value !== undefined) {
+                    values = result.map((r) => r.value);
+                    labels = result.map((r) => r.label || String(r.value));
+                }
+                else {
+                    values = result;
+                }
+            }
+            const finalLabels = labels || vd.labels;
+            applyEnumList(values, finalLabels);
+        })
+            .catch(() => {
+            applyEnumList([], []);
+        });
+    }
+    return prop;
+}
 /** 创建原始输入元素 (用于 List/TableList/Map 内部，不使用 ui-prop) */
-function createRawInputElement(propDump, taowuMeta) {
+function createRawInputElement(propDump, taowuMeta, compUuid, compIndex) {
     const type = (propDump.type || '').toLowerCase();
     const value = propDump.value;
+    // ValueDropdown
+    if (taowuMeta?.valueDropdown) {
+        const vd = taowuMeta.valueDropdown;
+        const isNumber = type === 'number';
+        const select = document.createElement('ui-select');
+        select.style.width = '100%';
+        function fillSelect(values, labels) {
+            for (let i = 0; i < values.length; i++) {
+                const opt = document.createElement('option');
+                opt.value = String(values[i]);
+                opt.textContent = labels && labels[i] ? labels[i] : String(values[i]);
+                select.appendChild(opt);
+            }
+            select.value = String(value);
+        }
+        if (vd.values) {
+            fillSelect(vd.values, vd.labels);
+        }
+        else if (vd.memberName) {
+            // 异步获取选项
+            fillSelect([], []);
+            if (compUuid && compIndex !== undefined) {
+                Editor.Message.request('taowu-inspector', 'resolve-value-dropdown', compUuid, compIndex, vd.memberName)
+                    .then((result) => {
+                    let values = [];
+                    let labels;
+                    if (Array.isArray(result)) {
+                        if (result.length > 0 && typeof result[0] === 'object' && result[0].value !== undefined) {
+                            values = result.map((r) => r.value);
+                            labels = result.map((r) => r.label || String(r.value));
+                        }
+                        else {
+                            values = result;
+                        }
+                    }
+                    const finalLabels = labels || vd.labels;
+                    while (select.firstChild)
+                        select.removeChild(select.firstChild);
+                    fillSelect(values, finalLabels);
+                })
+                    .catch(() => { });
+            }
+        }
+        if (taowuMeta.readOnly)
+            select.setAttribute('disabled', '');
+        select.addEventListener('confirm', async (e) => {
+            e.stopPropagation();
+            const newVal = select.value;
+            const typedVal = isNumber ? Number(newVal) : newVal;
+            propDump.value = typedVal;
+        });
+        return select;
+    }
     // Enum
     if (propDump.enumList && propDump.enumList.length > 0) {
         const select = document.createElement('ui-select');
@@ -427,7 +573,7 @@ function createListElement(propDump, compUuid, compIndex, propName, isRendering,
                     subRow.className = 'taowu-collection-row';
                     const subLabel = document.createElement('span');
                     subLabel.className = 'taowu-collection-label';
-                    subLabel.textContent = _elemMeta[subKey]?.labelText || subKey;
+                    subLabel.textContent = _elemMeta[subKey]?.labelText || toDisplayName(subKey);
                     subRow.appendChild(subLabel);
                     const subField = document.createElement('div');
                     subField.className = 'taowu-collection-field';
@@ -447,7 +593,8 @@ function createListElement(propDump, compUuid, compIndex, propName, isRendering,
                         subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
                     }
                     const subDump = { value: subVal, type: subType };
-                    const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, true);
+                    const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
+                    const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
                     subField.appendChild(subInput);
                     const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
                     if (isSubInput) {
@@ -505,7 +652,7 @@ function createListElement(propDump, compUuid, compIndex, propName, isRendering,
                     itemDump = { value: items[i], type: itemType };
                     itemPath = `${basePath}.${i}`;
                 }
-                const itemInput = createInputElement(itemDump, undefined, compUuid, compIndex, propName, isRendering, _useRaw);
+                const itemInput = createInputElement(itemDump, taowuMeta, compUuid, compIndex, propName, isRendering, _useRaw);
                 itemContent.appendChild(itemInput);
                 const _itemType = itemDump.type;
                 if (itemInput.tagName.toLowerCase() === 'ui-prop') {
@@ -699,7 +846,8 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
                             subType = typeof subVal === 'number' ? 'Number' : typeof subVal === 'boolean' ? 'Boolean' : 'String';
                         }
                         const subDump = { value: subVal, type: subType };
-                        const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, true);
+                        const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
+                        const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
                         cell.appendChild(subInput);
                         const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
                         if (isSubInput) {
@@ -921,7 +1069,7 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
                         subRow.className = 'taowu-collection-row';
                         const subLabel = document.createElement('span');
                         subLabel.className = 'taowu-collection-label';
-                        subLabel.textContent = _elemMeta[subKey]?.labelText || subKey;
+                        subLabel.textContent = _elemMeta[subKey]?.labelText || toDisplayName(subKey);
                         subRow.appendChild(subLabel);
                         const subField = document.createElement('div');
                         subField.className = 'taowu-collection-field';
@@ -944,7 +1092,8 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
                                 : typeof subVal === 'boolean' ? 'Boolean' : 'String';
                         }
                         const subDump = { value: subVal, type: subType };
-                        const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, true);
+                        const _isNestedObj = typeof subVal === 'object' && subVal !== null && !Array.isArray(subVal) && subType !== 'Number' && subType !== 'Boolean' && subType !== 'String' && !subType.toLowerCase().startsWith('cc.');
+                        const subInput = createInputElement(subDump, _elemMeta[subKey], compUuid, compIndex, propName, isRendering, !_isNestedObj, elementMetadata);
                         subField.appendChild(subInput);
                         const isSubInput = subInput.tagName.toLowerCase() === 'ui-input';
                         if (isSubInput) {
@@ -991,7 +1140,7 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
                     value: itemValue,
                     type: typeof itemValue === 'number' ? 'Number' : 'String',
                 };
-                const itemInput = createInputElement(itemDump, undefined, compUuid, compIndex, propName, isRendering, true);
+                const itemInput = createInputElement(itemDump, taowuMeta, compUuid, compIndex, propName, isRendering, true);
                 cell.appendChild(itemInput);
                 itemInput.addEventListener('change', async () => {
                     if (isRendering && isRendering())
@@ -1332,13 +1481,30 @@ function createMapElement(propDump, compUuid, compIndex, propName, isRendering, 
     const { container, content } = createBoxContainer(`${taowuMeta?.labelText || propDump.displayName || toDisplayName(propName)} (${keys.length})`);
     // 获取元素类型元数据用于 LabelText
     const _elemTypeName = propDump.type;
-    const _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
+    let _elemMeta = (_elemTypeName && elementMetadata && elementMetadata[_elemTypeName]) || {};
+    // 如果元数据中没有该类型，异步查询
+    if (_elemTypeName && !_elemMeta && _elemTypeName !== 'Object' && !_elemTypeName.startsWith('cc.')) {
+        Editor.Message.request('taowu-inspector', 'query-taowu-metadata', _elemTypeName).then((em) => {
+            if (em) {
+                _elemMeta = em;
+                if (elementMetadata)
+                    elementMetadata[_elemTypeName] = em;
+                // 重新渲染标签
+                for (const key of Object.keys(em)) {
+                    const labelEl = container.querySelector(`[data-prop-key="${key}"]`);
+                    if (labelEl && em[key]?.labelText) {
+                        labelEl.textContent = em[key].labelText;
+                    }
+                }
+            }
+        }).catch(() => { });
+    }
     for (const key of keys) {
         const row = document.createElement('div');
         row.className = 'taowu-collection-row';
         const keyLabel = document.createElement('span');
         keyLabel.className = 'taowu-collection-label';
-        keyLabel.textContent = _elemMeta[key]?.labelText || key;
+        keyLabel.textContent = _elemMeta[key]?.labelText || toDisplayName(key);
         row.appendChild(keyLabel);
         const valField = document.createElement('div');
         valField.className = 'taowu-collection-field';
@@ -1354,9 +1520,9 @@ function createMapElement(propDump, compUuid, compIndex, propName, isRendering, 
             valType = typeof val === 'number' ? 'Number' : typeof val === 'boolean' ? 'Boolean' : 'String';
         }
         // 如果子属性本身是对象 (嵌套 class)，递归渲染
-        if (val && typeof val === 'object' && !Array.isArray(val) && !valType.startsWith('cc.') && Object.keys(val).length > 0) {
-            const nestedDump = rawSubDump || { value: val, type: valType, path: `${basePath}.${key}` };
-            const nestedEl = createMapElement(nestedDump, compUuid, compIndex, propName, isRendering, _elemMeta[key], elementMetadata);
+        if (val && typeof val === 'object' && !Array.isArray(val) && !valType.toLowerCase().startsWith('cc.') && Object.keys(val).length > 0) {
+            const nestedDump = rawSubDump || { value: val, type: valType, path: `${basePath}.${key}`, name: key };
+            const nestedEl = createMapElement(nestedDump, compUuid, compIndex, key, isRendering, _elemMeta[key], elementMetadata);
             valField.appendChild(nestedEl);
         }
         else {
@@ -1436,20 +1602,11 @@ function setupChangeListener(input, propName, propDump, compUuid, compIndex, tao
             type: propDump.type,
             value: newValue,
         };
-        console.log('[TaoWuInspector] confirm set-property:', {
-            uuid: compUuid,
-            path: propPath,
-            propDumpPath: propDump.path,
-            newValue: newValue,
-            oldValue: lastWrittenValue,
-            type: propDump.type,
-        });
         const result = await Editor.Message.request('scene', 'set-property', {
             uuid: compUuid,
             path: propPath,
             dump: setDump,
         });
-        console.log('[TaoWuInspector] confirm result:', result);
         if (!result) {
             console.warn('[TaoWuInspector] set-property failed');
             try {

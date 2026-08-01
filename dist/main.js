@@ -34,6 +34,23 @@ exports.methods = {
      */
     async importExample() {
         await example_importer_1.ExampleImporter.importExample();
+    },
+    /**
+     * 解析 ValueDropdown memberName (方法名/字段名)
+     */
+    async resolveValueDropdown(uuid, compIndex, memberName) {
+        try {
+            const result = await Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'taowu-inspector',
+                method: 'resolveValueDropdown',
+                args: [uuid, compIndex, memberName]
+            });
+            return result;
+        }
+        catch (e) {
+            console.warn('[TaoWuInspector] resolveValueDropdown 失败:', e);
+            return null;
+        }
     }
 };
 function load() {

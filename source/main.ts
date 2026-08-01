@@ -31,6 +31,23 @@ export const methods: { [key: string]: (...any: any) => any } = {
      */
     async importExample(): Promise<void> {
         await ExampleImporter.importExample();
+    },
+
+    /**
+     * 解析 ValueDropdown memberName (方法名/字段名)
+     */
+    async resolveValueDropdown(uuid: string, compIndex: number, memberName: string): Promise<any> {
+        try {
+            const result = await Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'taowu-inspector',
+                method: 'resolveValueDropdown',
+                args: [uuid, compIndex, memberName]
+            });
+            return result;
+        } catch (e) {
+            console.warn('[TaoWuInspector] resolveValueDropdown 失败:', e);
+            return null;
+        }
     }
 };
 

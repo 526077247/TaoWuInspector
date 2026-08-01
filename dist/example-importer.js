@@ -29,6 +29,11 @@ export interface ITaoWuPropertyMeta {
     textarea?: boolean;
     color?: boolean;
     tableList?: boolean;
+    valueDropdown?: {
+        memberName?: string;
+        values?: (number | string)[];
+        labels?: string[];
+    };
 }
 
 export interface ITaoWuClassMeta {
@@ -222,6 +227,24 @@ export function Button(name?: string) {
         TaoWuRegistry.register(getClassName(target), propertyKey, { button: { name } });
     };
 }
+
+/** 值下拉选择 (类似 Odin ValueDropdown)
+ * @param values 字符串(方法名/字段名) 或 值数组
+ * @param labels 可选标签数组
+ */
+export function ValueDropdown(values: string | (number | string)[], labels?: string[]) {
+    return function (target: any, propertyKey: string) {
+        if (typeof values === 'string') {
+            TaoWuRegistry.register(getClassName(target), propertyKey, {
+                valueDropdown: { memberName: values, labels }
+            });
+        } else {
+            TaoWuRegistry.register(getClassName(target), propertyKey, {
+                valueDropdown: { values, labels }
+            });
+        }
+    };
+}
 `
     }
 ];
@@ -254,14 +277,28 @@ class WeaponConfig {
     critRate: number = 0;
     @property
     @LabelText("元素类型")
+    @ValueDropdown(['physical', 'fire', 'ice', 'lightning', 'poison'], ['物理', '火', '冰', '雷', '毒'])
     elementType: string = 'none';
     @property
     @LabelText("耐久度")
     durability: number = 100;
+    @property
+    @LabelText("稀有度")
+    @ValueDropdown('getRarityOptions')
+    rarity: number = 1;
     // 嵌套 class
     @property({ type: MapEntry })
     @LabelText("附魔属性")
     enchant: MapEntry = (() => { const e = new MapEntry(); e.key = 'fire'; e.value = 5; return e; })();
+
+    getRarityOptions() {
+        return [
+            { value: 0, label: '普通' },
+            { value: 1, label: '精良' },
+            { value: 2, label: '史诗' },
+            { value: 3, label: '传说' },
+        ];
+    }
 }
 
 @ccclass('SkillConfig')
@@ -305,7 +342,8 @@ import {
     TableList,
     OnValueChanged,
     OnCollectionChanged,
-    Button
+    Button,
+    ValueDropdown
 } from '../Runtime/TaoWuDecorators';
 
 @ccclass('TaoWuDemoComponent')
@@ -551,6 +589,92 @@ export class TaoWuDemoComponent extends Component {
     @TableList()
     @FoldoutGroup('Map 字典')
     dropRateMap: { [key: string]: string } = { gold: '75%', silver: '50%', bronze: '25%' };
+
+    // ─── ValueDropdown 测试 ───
+    @property
+    @ValueDropdown([1, 2, 3, 5, 8, 13], ['一', '二', '三', '五', '八', '十三'])
+    @FoldoutGroup('ValueDropdown 测试')
+    fibonacciChoice: number = 1;
+
+    @property
+    @ValueDropdown('getTextureSizes')
+    @FoldoutGroup('ValueDropdown 测试')
+    textureSize: number = 256;
+
+    getTextureSizes() {
+        return [32, 64, 128, 256, 512, 1024];
+    }
+
+    @property
+    @ValueDropdown('StaticElementTypes', ['火', '冰', '雷', '毒'])
+    @FoldoutGroup('ValueDropdown 测试')
+    elementType: string = 'fire';
+
+    static StaticElementTypes = ['fire', 'ice', 'lightning', 'poison'];
+
+    // ─── 嵌套列表中的 ValueDropdown ───
+    @property([CCInteger])
+    @ValueDropdown([10, 20, 30, 50, 100], ['十个', '二十', '三十', '五十', '一百'])
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    dropdownDamageList: number[] = [10, 20, 30];
+
+    @property({ type: [CCString] })
+    @ValueDropdown(['fire', 'ice', 'lightning'], ['火', '冰', '雷'])
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    elementList: string[] = ['fire', 'ice'];
+
+    // ─── 嵌套对象中的 ValueDropdown ───
+    @property({ type: WeaponConfig })
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    selectedWeapon: WeaponConfig = (() => { const w = new WeaponConfig(); w.weaponName = '烈焰剑'; w.damage = 50; w.critRate = 0.15; w.elementType = 'fire'; w.durability = 100; return w; })();
+
+    @property
+    @ValueDropdown('getSkillChoices')
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    selectedSkillName: string = '火球术';
+
+    getSkillChoices() {
+        return [
+            { value: '火球术', label: '火球术' },
+            { value: '冰风暴', label: '冰风暴' },
+            { value: '雷电术', label: '雷电术' },
+        ];
+    }
+
+    // ─── 嵌套 MapEntry 中的 ValueDropdown ───
+    @property({ type: [MapEntry] })
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    statEntries: MapEntry[] = [
+        (() => { const e = new MapEntry(); e.key = 'attack'; e.value = 100; return e; })(),
+        (() => { const e = new MapEntry(); e.key = 'defense'; e.value = 50; return e; })(),
+    ];
+
+    // ─── TableList + ValueDropdown ───
+    @property({ type: [WeaponConfig] })
+    @TableList()
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    weaponInventory: WeaponConfig[] = [
+        (() => { const w = new WeaponConfig(); w.weaponName = '铁剑'; w.damage = 10; w.elementType = 'physical'; w.rarity = 0; return w; })(),
+        (() => { const w = new WeaponConfig(); w.weaponName = '冰霜弓'; w.damage = 25; w.elementType = 'ice'; w.rarity = 2; return w; })(),
+    ];
+
+    // ─── 嵌套 class 的 ValueDropdown ───
+    @property({ type: SkillConfig })
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    ultimateSkill: SkillConfig = (() => { const s = new SkillConfig(); s.skillName = '终极技'; s.cooldown = 60; s.manaCost = 100; s.level = 5; s.enabled = true; return s; })();
+
+    // ─── ValueDropdown in nested SkillConfig ───
+    @property
+    @ValueDropdown('getSkillChoices')
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    equippedSkillName: string = '火球术';
+
+    // ─── TableList + 简单类型 ValueDropdown ───
+    @property([CCInteger])
+    @TableList()
+    @ValueDropdown([5, 10, 15, 20, 25], ['五', '十', '十五', '二十', '二十五'])
+    @FoldoutGroup('ValueDropdown 嵌套测试')
+    tableListDropdown: number[] = [5, 10, 15];
 }
 `
     }
