@@ -23,6 +23,8 @@ export interface ITaoWuPropertyMeta {
     onCollectionChanged?: string;
     button?: { name?: string };
     range?: { min: number; max: number };
+    rangeMin?: number;
+    rangeMax?: number;
     textarea?: boolean;
     color?: boolean;
     tableList?: boolean;
@@ -182,9 +184,23 @@ export function PropertyOrder(order: number) {
 }
 
 /** 数值范围滑块 */
-export function PropertyRange(min: number, max: number) {
+export function Range(min: number, max: number) {
     return function (target: any, propertyKey: string) {
         TaoWuRegistry.register(getClassName(target), propertyKey, { range: { min, max } });
+    };
+}
+
+/** 数值范围最小值 */
+export function Min(min: number) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { rangeMin: min });
+    };
+}
+
+/** 数值范围最大值 */
+export function Max(max: number) {
+    return function (target: any, propertyKey: string) {
+        TaoWuRegistry.register(getClassName(target), propertyKey, { rangeMax: max });
     };
 }
 
@@ -360,7 +376,9 @@ import {
     DisableIf,
     LabelText,
     ReadOnly,
-    PropertyRange,
+    Range,
+    Min,
+    Max,
     Title,
     InfoBox,
     PropertyOrder,
@@ -380,7 +398,7 @@ export class TaoWuDemoComponent extends TaoWuCompoent {
     componentName: string = 'Demo';
 
     @property
-    @PropertyRange(0, 100)
+    @Range(0, 100)
     @OnValueChanged('onHealthChanged')
     health: number = 100;
 
@@ -481,7 +499,7 @@ export class TaoWuDemoComponent extends TaoWuCompoent {
 
     @property
     @TabGroup('武器配置', '远程')
-    @PropertyRange(1, 100)
+    @Range(1, 100)
     attackRange: number = 50;
 
     @property
@@ -837,12 +855,18 @@ import {
     DisableIf,
     LabelText,
     ReadOnly,
-    PropertyRange,
+    Range,
+    Min,
+    Max,
     Title,
     InfoBox,
     PropertyOrder,
     TextArea,
     TableList,
+    TableList,
+    Button,
+    OnValueChanged,
+    OnCollectionChanged,
     ValueDropdown
 } from '../Runtime/TaoWuDecorators';
 
@@ -852,7 +876,7 @@ export class TaoWuDemoConfig {
     componentName: string = 'Demo';
 
     @property
-    @PropertyRange(0, 100)
+    @Range(0, 100)
     health: number = 100;
 
     @property
@@ -943,7 +967,7 @@ export class TaoWuDemoConfig {
 
     @property
     @TabGroup('武器配置', '远程')
-    @PropertyRange(1, 100)
+    @Range(1, 100)
     @LabelText("攻击距离")
     attackRange: number = 50;
 
@@ -1030,8 +1054,58 @@ export class TaoWuDemoConfig {
     elementType: string = 'fire';
 
     static StaticElementTypes = ['fire', 'ice', 'lightning', 'poison'];
-}
-`
+
+    // ─── Button / 回调测试 ───
+    @Button('重置生命值')
+    @FoldoutGroup('回调测试')
+    resetHealth(): void {
+        this.health = 100;
+    }
+
+    @Button()
+    @FoldoutGroup('回调测试')
+    randomizeHealth(): void {
+        this.health = Math.floor(Math.random() * 100);
+    }
+
+    @property
+    @FoldoutGroup('回调测试')
+    @OnValueChanged('onSpeedChanged')
+    testSpeed: number = 10;
+
+    @property([CCInteger])
+    @FoldoutGroup('回调测试')
+    @OnCollectionChanged('onListChanged')
+    testList: number[] = [1, 2, 3];
+
+    onSpeedChanged(): void {
+        this.moveSpeed = this.testSpeed;
+    }
+
+    onListChanged(): void {
+        this.health = this.testList.length;
+    }
+
+    // ─── Min / Max 测试 ───
+    @property
+    @FoldoutGroup('Min/Max 测试')
+    @Min(0)
+    @LabelText("最小值限制(≥0)")
+    minTestValue: number = 50;
+
+    @property
+    @FoldoutGroup('Min/Max 测试')
+    @Max(100)
+    @LabelText("最大值限制(≤100)")
+    maxTestValue: number = 50;
+
+    @property
+    @FoldoutGroup('Min/Max 测试')
+    @Min(0)
+    @Max(100)
+    @LabelText("组合限制(0-100)")
+    minMaxTestValue: number = 50;
+}`
     }
 ];
 

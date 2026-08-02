@@ -45,6 +45,21 @@ async function triggerCallbacks(compUuid, compIndex, propName) {
     }
     catch (e) { }
 }
+/** json-edit 模式: 触发 OnValueChanged / OnCollectionChanged 回调 */
+async function triggerJsonEditCallback(taowuMeta, propName) {
+    const methodName = taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged;
+    if (!methodName || !json_asset_renderer_1.jsonState.rootTypeName || !json_asset_renderer_1.jsonState.asset)
+        return;
+    try {
+        const result = await Editor.Message.request('taowu-inspector', 'trigger-value-changed-by-class', json_asset_renderer_1.jsonState.rootTypeName, methodName, JSON.parse(JSON.stringify(json_asset_renderer_1.jsonState.asset)));
+        if (result) {
+            Object.keys(result).forEach(k => { json_asset_renderer_1.jsonState.asset[k] = result[k]; });
+            // 回调可能修改了其他属性，强制重新渲染
+            json_asset_renderer_1.jsonState.lastVisibleKeys = '__force__';
+        }
+    }
+    catch (e) { }
+}
 /** camelCase 转为 Title Case (如 configMap → Config Map) */
 function toDisplayName(str) {
     return str.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
@@ -111,7 +126,26 @@ function createButtonElement(propName, taowuMeta, compUuid, compIndex, propertie
     btn.addEventListener('click', async () => {
         btn.classList.add('taowu-button-loading');
         try {
-            await invokeMethod(compUuid, compIndex, propName);
+            if (compUuid === 'json-edit') {
+                // JsonAsset: 通过类名创建临时实例调用方法
+                const result = await Editor.Message.request('taowu-inspector', 'invoke-method-by-class', json_asset_renderer_1.jsonState.rootTypeName, propName, JSON.parse(JSON.stringify(json_asset_renderer_1.jsonState.asset)));
+                if (result) {
+                    // 同步修改回 jsonState.asset
+                    Object.keys(result).forEach(k => { json_asset_renderer_1.jsonState.asset[k] = result[k]; });
+                    json_asset_renderer_1.jsonState.dirty = true;
+                    if (json_asset_renderer_1.jsonState.onDirty)
+                        json_asset_renderer_1.jsonState.onDirty();
+                    // 强制重新渲染: 重置 lastVisibleKeys 使条件检测认为有变化
+                    json_asset_renderer_1.jsonState.lastVisibleKeys = '__force__';
+                    // 从按钮 DOM 向上查找 content 元素
+                    const contentEl = btn.closest('.json-asset-content') || json_asset_renderer_1.jsonState.contentEl;
+                    if (contentEl?.__taowuRerender)
+                        contentEl.__taowuRerender();
+                }
+            }
+            else {
+                await invokeMethod(compUuid, compIndex, propName);
+            }
         }
         finally {
             btn.classList.remove('taowu-button-loading');
@@ -269,6 +303,12 @@ function createInputElement(propDump, taowuMeta, compUuid, compIndex, propName, 
         dumpCopy.slide = true;
         dumpCopy.min = taowuMeta.range.min;
         dumpCopy.max = taowuMeta.range.max;
+    }
+    if (taowuMeta?.rangeMin !== undefined) {
+        dumpCopy.min = taowuMeta.rangeMin;
+    }
+    if (taowuMeta?.rangeMax !== undefined) {
+        dumpCopy.max = taowuMeta.rangeMax;
     }
     if (taowuMeta?.textarea)
         dumpCopy.multiline = true;
@@ -728,6 +768,7 @@ function createListElement(propDump, compUuid, compIndex, propName, isRendering,
                         // 同步回 propDump.value (原始 JSON 数组引用)
                         propDump.value.length = 0;
                         propDump.value.push(...items);
+                        await triggerJsonEditCallback(taowuMeta, propName);
                         updateHeader();
                         renderItems();
                         return;
@@ -948,6 +989,7 @@ function createListElement(propDump, compUuid, compIndex, propName, isRendering,
                         }
                         propDump.value.length = 0;
                         propDump.value.push(...items);
+                        await triggerJsonEditCallback(taowuMeta, propName);
                         updateHeader();
                         renderItems();
                         return;
@@ -1004,6 +1046,7 @@ function createListElement(propDump, compUuid, compIndex, propName, isRendering,
             }
             propDump.value.length = 0;
             propDump.value.push(...items);
+            await triggerJsonEditCallback(taowuMeta, propName);
             updateHeader();
             renderItems();
             return;
@@ -1265,6 +1308,7 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
                         }
                         propDump.value.length = 0;
                         propDump.value.push(...items);
+                        await triggerJsonEditCallback(taowuMeta, propName);
                         updateHeader();
                         renderItems();
                         return;
@@ -1518,10 +1562,9 @@ function createTableListElement(propDump, compUuid, compIndex, propName, isRende
             propDump.value.length = 0;
             propDump.value.push(...items);
         }
+        await triggerJsonEditCallback(taowuMeta, propName);
         updateHeader();
         renderItems();
-        if (taowuMeta?.onCollectionChanged)
-            await triggerCallbacks(compUuid, compIndex, propName);
     });
     content.appendChild(addBtn);
     return container;
@@ -1814,10 +1857,7 @@ function setupChangeListener(input, propName, propDump, compUuid, compIndex, tao
                     json_asset_renderer_1.jsonState.dirty = true;
                     if (json_asset_renderer_1.jsonState.onDirty)
                         json_asset_renderer_1.jsonState.onDirty();
-                    // 触发重新渲染以更新 ShowIf/HideIf 等条件
-                    const contentEl = input.closest('.json-asset-content');
-                    if (contentEl?.__taowuRerender)
-                        contentEl.__taowuRerender(propName, newVal);
+                    // 不在此处重新渲染，等 confirm (失去焦点) 时再渲染
                 }
                 return;
             }
@@ -1831,6 +1871,46 @@ function setupChangeListener(input, propName, propDump, compUuid, compIndex, tao
             }
         };
         input.addEventListener('change-dump', handleChange);
+        // json-edit: 失去焦点时才触发重新渲染和回调
+        if (compUuid === 'json-edit') {
+            const doRerender = () => {
+                if (!json_asset_renderer_1.jsonState.asset)
+                    return;
+                if (taowuMeta?.onValueChanged) {
+                    Editor.Message.request('taowu-inspector', 'trigger-value-changed-by-class', json_asset_renderer_1.jsonState.rootTypeName, taowuMeta.onValueChanged, JSON.parse(JSON.stringify(json_asset_renderer_1.jsonState.asset)))
+                        .then((cbResult) => {
+                        if (cbResult) {
+                            Object.keys(cbResult).forEach(k => { json_asset_renderer_1.jsonState.asset[k] = cbResult[k]; });
+                            json_asset_renderer_1.jsonState.lastVisibleKeys = '__force__';
+                            if (json_asset_renderer_1.jsonState.contentEl?.__taowuRerender)
+                                json_asset_renderer_1.jsonState.contentEl.__taowuRerender();
+                        }
+                    });
+                }
+                else {
+                    const contentEl = json_asset_renderer_1.jsonState.contentEl;
+                    if (contentEl?.__taowuRerender)
+                        contentEl.__taowuRerender();
+                }
+            };
+            // 防抖: confirm 和 blur 可能同时触发，只执行一次
+            let rerenderTimer = null;
+            const debouncedRerender = () => {
+                if (rerenderTimer)
+                    clearTimeout(rerenderTimer);
+                rerenderTimer = setTimeout(() => { rerenderTimer = null; doRerender(); }, 50);
+            };
+            // 监听 ui-prop 的 confirm 事件
+            input.addEventListener('confirm', () => { debouncedRerender(); });
+            // 延迟查找内部子元素监听 confirm (shadow DOM 需要等渲染完成)
+            requestAnimationFrame(() => {
+                const innerInputs = input.querySelectorAll('ui-input, ui-num-input, ui-slider, ui-color-picker');
+                innerInputs.forEach((el) => {
+                    el.addEventListener('confirm', () => { debouncedRerender(); });
+                    el.addEventListener('blur', () => { debouncedRerender(); });
+                });
+            });
+        }
         return;
     }
     const isSlider = input.tagName.toLowerCase() === 'ui-slider';
@@ -1841,21 +1921,6 @@ function setupChangeListener(input, propName, propDump, compUuid, compIndex, tao
         const newValue = getInputValue(input, propDump);
         if (JSON.stringify(newValue) === JSON.stringify(lastWrittenValue))
             return;
-        if (compUuid === 'json-edit') {
-            propDump.value = newValue;
-            lastWrittenValue = newValue;
-            if (json_asset_renderer_1.jsonState.asset) {
-                syncJsonEditValue(json_asset_renderer_1.jsonState.asset, propDump, newValue);
-                json_asset_renderer_1.jsonState.dirty = true;
-                if (json_asset_renderer_1.jsonState.onDirty)
-                    json_asset_renderer_1.jsonState.onDirty();
-                // 触发重新渲染以更新 ShowIf/HideIf 等条件
-                const contentEl = input.closest('.json-asset-content');
-                if (contentEl?.__taowuRerender)
-                    contentEl.__taowuRerender(propName, newValue);
-            }
-            return;
-        }
         const result = await safeSetProperty(compUuid, propPath, { type: propDump.type, value: newValue });
         if (!result) {
             try {
@@ -1871,10 +1936,58 @@ function setupChangeListener(input, propName, propDump, compUuid, compIndex, tao
             await triggerCallbacks(compUuid, compIndex, propName);
     };
     const isInputLike = input.tagName.toLowerCase() === 'ui-input' || isSlider;
-    if (isInputLike)
+    if (compUuid === 'json-edit') {
+        // json-edit: change 时仅同步值，confirm 时才重新渲染和回调
+        const doSyncJsonEdit = () => {
+            if (!json_asset_renderer_1.jsonState.asset)
+                return;
+            const newValue = getInputValue(input, propDump);
+            if (JSON.stringify(newValue) === JSON.stringify(lastWrittenValue))
+                return;
+            propDump.value = newValue;
+            lastWrittenValue = newValue;
+            syncJsonEditValue(json_asset_renderer_1.jsonState.asset, propDump, newValue);
+            json_asset_renderer_1.jsonState.dirty = true;
+            if (json_asset_renderer_1.jsonState.onDirty)
+                json_asset_renderer_1.jsonState.onDirty();
+        };
+        const doRerenderJsonEdit = () => {
+            if (!json_asset_renderer_1.jsonState.asset)
+                return;
+            if (taowuMeta?.onValueChanged) {
+                Editor.Message.request('taowu-inspector', 'trigger-value-changed-by-class', json_asset_renderer_1.jsonState.rootTypeName, taowuMeta.onValueChanged, JSON.parse(JSON.stringify(json_asset_renderer_1.jsonState.asset)))
+                    .then((cbResult) => {
+                    if (cbResult) {
+                        Object.keys(cbResult).forEach(k => { json_asset_renderer_1.jsonState.asset[k] = cbResult[k]; });
+                        json_asset_renderer_1.jsonState.lastVisibleKeys = '__force__';
+                        const contentEl = json_asset_renderer_1.jsonState.contentEl;
+                        if (contentEl?.__taowuRerender)
+                            contentEl.__taowuRerender();
+                    }
+                });
+            }
+            else {
+                const contentEl = json_asset_renderer_1.jsonState.contentEl;
+                if (contentEl?.__taowuRerender)
+                    contentEl.__taowuRerender();
+            }
+        };
+        if (isInputLike) {
+            // ui-input/ui-slider: change 时同步值，confirm 时重新渲染
+            input.addEventListener('change', () => { doSyncJsonEdit(); });
+            input.addEventListener('confirm', (e) => { e.stopPropagation(); doRerenderJsonEdit(); });
+        }
+        else {
+            // 其他元素 (checkbox/select 等): change 时同步+渲染
+            input.addEventListener('change', () => { doSyncJsonEdit(); doRerenderJsonEdit(); });
+        }
+    }
+    else if (isInputLike) {
         input.addEventListener('confirm', (e) => { e.stopPropagation(); doSetProperty(); });
-    else
+    }
+    else {
         input.addEventListener('change', () => { doSetProperty(); });
+    }
 }
 /** 判断能否根据元数据推断数组元素的默认值 */
 function canInferElementDefault(elemType, elementMetadata) {

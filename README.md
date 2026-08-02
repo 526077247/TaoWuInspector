@@ -9,7 +9,7 @@
 - 🔒 **条件禁用** — EnableIf / DisableIf 根据其他属性值动态启用/禁用编辑（属性仍可见）
 - 🏷️ **自定义标签** — LabelText 修改属性显示名称（支持属性级和类级装饰）
 - 🔒 **只读** — ReadOnly 标记属性不可编辑
-- 📊 **数值滑块** — PropertyRange 将数字属性渲染为滑块
+- 📊 **数值范围** — Range / Min / Max 将数字属性渲染为滑块或限制范围
 - 📝 **多行文本** — TextArea 将字符串属性渲染为多行输入框
 - 💡 **信息提示** — Title / InfoBox 在属性上方添加标题和提示框
 - 📋 **表格列表** — TableList 将数组渲染为网状表格，支持列宽拖拽
@@ -57,7 +57,9 @@ import {
     DisableIf,
     LabelText,
     ReadOnly,
-    PropertyRange,
+    Range,
+    Min,
+    Max,
     Title,
     InfoBox,
     PropertyOrder,
@@ -105,7 +107,7 @@ export class MyComponent extends TaoWuCompoent {
     mainColor: Color = new Color(255, 255, 255, 255);
 
     @property
-    @PropertyRange(0, 100)
+    @Range(0, 100)
     health: number = 100;
 
     @property
@@ -153,7 +155,9 @@ export class MyComponent extends TaoWuCompoent {
 | 装饰器 | 参数 | 说明 |
 |--------|------|------|
 | `@ReadOnly()` | 无 | 标记属性为只读 |
-| `@PropertyRange(min, max)` | `min: number`<br>`max: number` | 将数字属性渲染为滑块 |
+| `@Range(min, max)` | `min: number`<br>`max: number` | 将数字属性渲染为滑块（同时设置最小/最大值） |
+| `@Min(min)` | `min: number` | 设置数字属性最小值（不渲染滑块，仅限制范围） |
+| `@Max(max)` | `max: number` | 设置数字属性最大值（不渲染滑块，仅限制范围） |
 | `@TextArea()` | 无 | 将字符串属性渲染为多行文本框 |
 | `@PropertyOrder(order)` | `order: number` — 排序值 | 控制属性渲染顺序（值大的在后） |
 
@@ -271,7 +275,7 @@ class WeaponConfig {
 
 ```typescript
 @property
-@PropertyRange(0, 100)
+@Range(0, 100)
 @OnValueChanged('onHealthChanged')
 health: number = 100;
 
@@ -415,7 +419,7 @@ equippedWeapon: WeaponConfig = new WeaponConfig();
 **嵌套对象特点：**
 - 容器标题优先使用类级 `@LabelText`，其次类型名
 - 子属性标签使用属性级 `@LabelText`
-- 支持 `@ValueDropdown`、`@PropertyRange` 等所有装饰器
+- 支持 `@ValueDropdown`、`@Range`、`@Min`、`@Max` 等所有装饰器
 - 深层嵌套自动递归渲染
 
 ## JsonAsset Inspector
@@ -445,7 +449,7 @@ export class TaoWuDemoConfig {
     componentName: string = 'Demo';
 
     @property
-    @PropertyRange(0, 100)
+    @Range(0, 100)
     health: number = 100;
 
     @property
@@ -488,9 +492,11 @@ export class TaoWuDemoConfig {
 | TableList | 表格渲染、列宽拖拽、嵌套对象递归渲染 |
 | 嵌套对象 | 递归渲染所有 `_t` 类型的字段，装饰器自动应用 |
 | 自动保存 | 离开面板自动保存，也可手动点击保存按钮 |
+| Button | 通过创建临时类实例调用方法，修改的属性同步回 JSON |
+| OnValueChanged / OnCollectionChanged | 属性值变化时触发回调，通过临时实例调用 |
 | 滑块不断触 | 拖动滑块时不会重建 DOM，仅 ShowIf/HideIf/EnableIf/DisableIf 条件变化时才重新渲染 |
 
-> **不适用功能**：`@Button`、`@OnValueChanged`、`@OnCollectionChanged` 需要运行时组件实例，JsonAsset 无运行时实例，不支持。
+> **Button / 回调**：`@Button`、`@OnValueChanged`、`@OnCollectionChanged` 在 JsonAsset 中通过创建临时类实例实现。方法内修改的属性值会同步回 JSON。限制：方法内访问 `this.node`/`this.scene` 等组件上下文不可用。
 
 ## 项目结构
 

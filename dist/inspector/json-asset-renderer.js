@@ -71,6 +71,11 @@ const CSS = `
 .taowu-infobox-info { background: rgba(64, 169, 255, 0.1); border-left: 3px solid #40a9ff; border-color: rgba(64, 169, 255, 0.3); color: #40a9ff; }
 .taowu-infobox-warning { background: rgba(250, 173, 20, 0.1); border-left: 3px solid #faad14; border-color: rgba(250, 173, 20, 0.3); color: #faad14; }
 .taowu-infobox-error { background: rgba(245, 34, 45, 0.1); border-left: 3px solid #f5222d; border-color: rgba(245, 34, 45, 0.3); color: #f5222d; }
+.taowu-button { cursor: pointer; padding: 6px 16px; font-size: 12px; text-align: center; border-radius: 4px; background: #2a3a4a; color: #6af; border: 1px solid #3a4a5a; user-select: none; transition: background 0.15s; margin: 2px 0; }
+.taowu-button:hover { background: #3a4a5a; }
+.taowu-button:active { background: #4a5a6a; }
+.taowu-button-disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+.taowu-button-loading { opacity: 0.6; pointer-events: none; }
 </style>
 `;
 exports.template = `
@@ -101,6 +106,7 @@ exports.jsonState = {
     url: '', // 当前资源 URL
     dirty: false, // 是否有修改
     onDirty: null,
+    contentEl: null, // content 元素引用 (用于 property-drawer 查找)
     lastVisibleKeys: '', // 记录上次可见属性，用于检测 ShowIf/HideIf 变化
     classMeta: null, // 当前类的元数据，用于条件判断
     rootTypeName: '', // 当前 JSON 的根类型名 (用于 ValueDropdown 方法调用)
@@ -115,6 +121,7 @@ function update(assetList, metaList) {
     exports.jsonState.asset = null;
     exports.jsonState.uuid = '';
     exports.jsonState.url = '';
+    exports.jsonState.contentEl = content;
     exports.jsonState.dirty = false;
     updateDirtyUI();
     if (!assetList || assetList.length === 0) {
@@ -393,8 +400,12 @@ async function renderJsonAsInspector(container, json) {
             elementMetadata[nt] = {};
         }
     }
+    // 保存滚动位置 (renderJsonAsInspector 会清空 innerHTML 导致滚动重置)
+    const scrollTop = container.scrollTop;
     container.innerHTML = '';
     renderWithMeta(container, json, classMeta, elementMetadata, propertyTypes);
+    // 恢复滚动位置
+    container.scrollTop = scrollTop;
 }
 function renderWithMeta(container, json, classMeta, elementMetadata = {}, propertyTypes = null) {
     // 收集所有需要渲染的 key: JSON 中已有的 key + classMeta 中声明但 JSON 缺失的 key
@@ -462,11 +473,25 @@ function renderWithMeta(container, json, classMeta, elementMetadata = {}, proper
         }
     }
     const dump = { value: dumpValue };
-    const propKeys = Object.keys(dumpValue);
+    // 收集 Button 方法的 key (不在 dumpValue 中，但需要渲染)
+    const buttonKeys = [];
+    for (const key of Object.keys(classMeta)) {
+        if (key === '__class__')
+            continue;
+        if (classMeta[key]?.button && !dumpValue[key]) {
+            buttonKeys.push(key);
+        }
+    }
+    const propKeys = [...Object.keys(dumpValue), ...buttonKeys];
     const organized = (0, taowu_utils_1.organizeProperties)(propKeys, classMeta);
     // 1. 无分组属性
     for (const key of organized.ungrouped) {
         const meta = classMeta[key];
+        if (meta?.button) {
+            const el = (0, property_drawer_1.createButtonElement)(key, meta, 'json-edit', 0, new Map(Object.entries(dumpValue)));
+            container.appendChild(el);
+            continue;
+        }
         const propDump = dumpValue[key];
         if (propDump) {
             const el = (0, property_drawer_1.createPropertyElement)(key, propDump, 'json-edit', 0, meta, () => false, () => { }, elementMetadata, new Map(Object.entries(dumpValue)));

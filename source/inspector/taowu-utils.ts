@@ -20,6 +20,8 @@ export interface ITaoWuPropertyMeta {
     onCollectionChanged?: string;
     button?: { name?: string };
     range?: { min: number; max: number };
+    rangeMin?: number;
+    rangeMax?: number;
     textarea?: boolean;
     color?: boolean;
     tableList?: boolean;

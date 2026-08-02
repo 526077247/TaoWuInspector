@@ -274,6 +274,50 @@ export const methods = {
             }
         } catch (e) { /* ignore */ }
         return null;
+    },
+
+    /**
+     * 通过类名创建临时实例调用方法 (用于 JsonAsset 的 Button)
+     * 把 JSON 数据拷贝到实例，调用方法后同步回 JSON
+     */
+    async invokeMethodByClassName(className: string, methodName: string, jsonData: any): Promise<any> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.js || !className) return null;
+        const cls = cc.js.getClassByName(className);
+        if (!cls) return null;
+        try {
+            const instance = new cls();
+            jsonToInstance(instance, jsonData, cc);
+            if (typeof instance[methodName] === 'function') {
+                instance[methodName]();
+            }
+            const result = instanceToJson(instance, jsonData, cc);
+            return result;
+        } catch (e) {
+            console.error('[TaoWuInspector] invokeMethodByClassName error:', e);
+            return null;
+        }
+    },
+
+    /**
+     * 通过类名触发回调 (用于 JsonAsset 的 OnValueChanged / OnCollectionChanged)
+     */
+    async triggerValueChangedByClassName(className: string, methodName: string, jsonData: any): Promise<any> {
+        const cc = (globalThis as any).cc;
+        if (!cc || !cc.js || !className) return null;
+        const cls = cc.js.getClassByName(className);
+        if (!cls) return null;
+        try {
+            const instance = new cls();
+            jsonToInstance(instance, jsonData, cc);
+            if (typeof instance[methodName] === 'function') {
+                instance[methodName]();
+            }
+            const result = instanceToJson(instance, jsonData, cc);
+            return result;
+        } catch (e) {
+            return null;
+        }
     }
 };
 
@@ -362,4 +406,85 @@ function setNestedProperty(obj: any, path: string, value: any): void {
         if (!current) return;
     }
     current[parts[parts.length - 1]] = value;
+}
+
+/** 递归把 JSON 数据拷贝到类实例 (含嵌套 _t 对象) */
+function jsonToInstance(instance: any, json: any, cc: any): void {
+    if (!instance || !json || typeof json !== 'object') return;
+    for (const key of Object.keys(json)) {
+        if (key === '_t') continue;
+        const val = json[key];
+        if (val && typeof val === 'object' && !Array.isArray(val) && val._t) {
+            // 嵌套 CCClass 对象
+            const subCls = cc.js.getClassByName(val._t);
+            if (subCls) {
+                const subInstance = new subCls();
+                jsonToInstance(subInstance, val, cc);
+                instance[key] = subInstance;
+            } else {
+                instance[key] = val;
+            }
+        } else if (Array.isArray(val)) {
+            // 数组: 深拷贝元素，嵌套 _t 对象创建实例
+            instance[key] = val.map((item: any) => {
+                if (item && typeof item === 'object' && item._t) {
+                    const itemCls = cc.js.getClassByName(item._t);
+                    if (itemCls) {
+                        const itemInstance = new itemCls();
+                        jsonToInstance(itemInstance, item, cc);
+                        return itemInstance;
+                    }
+                }
+                return item;
+            });
+        } else {
+            instance[key] = val;
+        }
+    }
+}
+
+/** 递归把类实例属性同步回 JSON 对象 (跳过函数和内部字段，保留 _t) */
+function instanceToJson(instance: any, json: any, cc: any): any {
+    if (!instance || !json || typeof json !== 'object') return json;
+    for (const key of Object.keys(json)) {
+        if (key === '_t') continue;
+        const instVal = instance[key];
+        if (typeof instVal === 'function') continue;
+        if (instVal === undefined) continue;
+        if (instVal && typeof instVal === 'object' && !Array.isArray(instVal)) {
+            // 嵌套对象: 保留 _t，同步属性
+            const subJson = json[key] || {};
+            if (subJson._t) {
+                for (const subKey of Object.keys(subJson)) {
+                    if (subKey === '_t') continue;
+                    if (typeof instVal[subKey] !== 'function' && instVal[subKey] !== undefined) {
+                        subJson[subKey] = instVal[subKey];
+                    }
+                }
+                json[key] = subJson;
+            } else {
+                // 不是 CCClass 嵌套对象，直接拷贝
+                json[key] = JSON.parse(JSON.stringify(instVal));
+            }
+        } else if (Array.isArray(instVal)) {
+            // 数组: 同步元素，保留 _t
+            json[key] = instVal.map((item: any, idx: number) => {
+                if (item && typeof item === 'object' && json[key] && json[key][idx] && json[key][idx]._t) {
+                    const itemJson = json[key][idx];
+                    for (const itemKey of Object.keys(itemJson)) {
+                        if (itemKey === '_t') continue;
+                        if (typeof item[itemKey] !== 'function' && item[itemKey] !== undefined) {
+                            itemJson[itemKey] = item[itemKey];
+                        }
+                    }
+                    return itemJson;
+                }
+                return item;
+            });
+        } else {
+            // 基本类型
+            json[key] = instVal;
+        }
+    }
+    return json;
 }

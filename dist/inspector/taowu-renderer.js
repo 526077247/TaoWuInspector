@@ -401,17 +401,6 @@ function doRender(self) {
     const properties = (0, taowu_utils_1.getProperties)(self.dump);
     const taowuMeta = self.taowuMetadata || {};
     const propKeys = (0, taowu_utils_1.collectAllKeys)(properties, taowuMeta);
-    // Debug info
-    const debugLines = [];
-    debugLines.push('componentType: "' + self.componentType + '"');
-    debugLines.push('nodeUuid: ' + self.nodeUuid);
-    const ctlDump = properties.get('configTableList');
-    if (ctlDump)
-        debugLines.push('configTableList: ' + JSON.stringify(ctlDump).substring(0, 500));
-    const cmDump = properties.get('configMap');
-    if (cmDump)
-        debugLines.push('configMap: ' + JSON.stringify(cmDump).substring(0, 500));
-    showDebug(self, debugLines.join('\n'));
     // 使用 compUuid 作为 set-property 的 uuid
     const propUuid = self.compUuid || self.nodeUuid;
     const isRendering = () => self.rendering;
@@ -755,6 +744,12 @@ function updatePropDumps(self) {
                 dumpCopy.slide = true;
                 dumpCopy.min = meta.range.min;
                 dumpCopy.max = meta.range.max;
+            }
+            if (meta?.rangeMin !== undefined) {
+                dumpCopy.min = meta.rangeMin;
+            }
+            if (meta?.rangeMax !== undefined) {
+                dumpCopy.max = meta.rangeMax;
             }
             if (meta?.textarea)
                 dumpCopy.multiline = true;

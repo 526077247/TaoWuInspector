@@ -59,6 +59,12 @@
             "query-class-property-types": {
                 "methods": ["queryClassPropertyTypes"]
             },
+            "invoke-method-by-class": {
+                "methods": ["invokeMethodByClassName"]
+            },
+            "trigger-value-changed-by-class": {
+                "methods": ["triggerValueChangedByClassName"]
+            },
             "installRuntime": {
                 "methods": ["installRuntime"]
             },

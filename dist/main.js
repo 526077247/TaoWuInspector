@@ -119,6 +119,39 @@ exports.methods = {
         }
     },
     /**
+     * 通过类名调用方法 (用于 JsonAsset 的 Button)
+     */
+    async invokeMethodByClassName(className, methodName, jsonData) {
+        try {
+            const result = await Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'taowu-inspector',
+                method: 'invokeMethodByClassName',
+                args: [className, methodName, jsonData]
+            });
+            return result;
+        }
+        catch (e) {
+            console.warn('[TaoWuInspector] invokeMethodByClassName 失败:', e);
+            return null;
+        }
+    },
+    /**
+     * 通过类名触发回调 (用于 JsonAsset 的 OnValueChanged/OnCollectionChanged)
+     */
+    async triggerValueChangedByClassName(className, methodName, jsonData) {
+        try {
+            const result = await Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'taowu-inspector',
+                method: 'triggerValueChangedByClassName',
+                args: [className, methodName, jsonData]
+            });
+            return result;
+        }
+        catch (e) {
+            return null;
+        }
+    },
+    /**
      * 读取文件内容 (用于 JsonAsset Inspector)
      */
     async readAssetFile(uuid) {

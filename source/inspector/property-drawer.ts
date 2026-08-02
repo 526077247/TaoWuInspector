@@ -41,6 +41,21 @@ async function triggerCallbacks(compUuid: string, compIndex: number, propName: s
     } catch (e) {}
 }
 
+/** json-edit 模式: 触发 OnValueChanged / OnCollectionChanged 回调 */
+async function triggerJsonEditCallback(taowuMeta: any, propName: string): Promise<void> {
+    const methodName = taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged;
+    if (!methodName || !jsonState.rootTypeName || !jsonState.asset) return;
+    try {
+        const result = await Editor.Message.request('taowu-inspector', 'trigger-value-changed-by-class',
+            jsonState.rootTypeName, methodName, JSON.parse(JSON.stringify(jsonState.asset)));
+        if (result) {
+            Object.keys(result).forEach(k => { jsonState.asset[k] = result[k]; });
+            // 回调可能修改了其他属性，强制重新渲染
+            jsonState.lastVisibleKeys = '__force__';
+        }
+    } catch (e) {}
+}
+
 /** camelCase 转为 Title Case (如 configMap → Config Map) */
 function toDisplayName(str: string): string {
     return str.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
@@ -115,7 +130,23 @@ export function createButtonElement(
     btn.addEventListener('click', async () => {
         btn.classList.add('taowu-button-loading');
         try {
-            await invokeMethod(compUuid, compIndex, propName);
+            if (compUuid === 'json-edit') {
+                // JsonAsset: 通过类名创建临时实例调用方法
+                const result = await Editor.Message.request('taowu-inspector', 'invoke-method-by-class',
+                    jsonState.rootTypeName, propName, JSON.parse(JSON.stringify(jsonState.asset)));
+                if (result) {
+                    // 同步修改回 jsonState.asset
+                    Object.keys(result).forEach(k => { jsonState.asset[k] = result[k]; });
+                    jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty();
+                    // 强制重新渲染: 重置 lastVisibleKeys 使条件检测认为有变化
+                    jsonState.lastVisibleKeys = '__force__';
+                    // 从按钮 DOM 向上查找 content 元素
+                    const contentEl = btn.closest('.json-asset-content') as any || jsonState.contentEl;
+                    if (contentEl?.__taowuRerender) contentEl.__taowuRerender();
+                }
+            } else {
+                await invokeMethod(compUuid, compIndex, propName);
+            }
         } finally {
             btn.classList.remove('taowu-button-loading');
         }
@@ -246,6 +277,8 @@ export function createInputElement(
     else { const baseName = propDump.name || propName; dumpCopy.displayName = toDisplayName(baseName); }
     if (taowuMeta?.readOnly) dumpCopy.readonly = true;
     if (taowuMeta?.range) { dumpCopy.slide = true; dumpCopy.min = taowuMeta.range.min; dumpCopy.max = taowuMeta.range.max; }
+    if (taowuMeta?.rangeMin !== undefined) { dumpCopy.min = taowuMeta.rangeMin; }
+    if (taowuMeta?.rangeMax !== undefined) { dumpCopy.max = taowuMeta.rangeMax; }
     if (taowuMeta?.textarea) dumpCopy.multiline = true;
     try { (prop as any).dump = dumpCopy; } catch (e) {}
     return prop;
@@ -529,6 +562,7 @@ function createListElement(propDump: any, compUuid: string, compIndex: number, p
                         // 同步回 propDump.value (原始 JSON 数组引用)
                         propDump.value.length = 0;
                         propDump.value.push(...items);
+                        await triggerJsonEditCallback(taowuMeta, propName);
                         updateHeader(); renderItems(); return;
                     }
                     await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
@@ -672,6 +706,7 @@ function createListElement(propDump: any, compUuid: string, compIndex: number, p
                     if (compUuid === 'json-edit') {
                         if (jsonState.asset) { jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty(); }
                         propDump.value.length = 0; propDump.value.push(...items);
+                        await triggerJsonEditCallback(taowuMeta, propName);
                         updateHeader(); renderItems(); return;
                     }
                     await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
@@ -708,6 +743,7 @@ function createListElement(propDump: any, compUuid: string, compIndex: number, p
             }
             if (jsonState.asset) { jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty(); }
             propDump.value.length = 0; propDump.value.push(...items);
+            await triggerJsonEditCallback(taowuMeta, propName);
             updateHeader(); renderItems(); return;
         }
         await safeSetProperty(compUuid, `${basePath}.length`, { value: newIdx + 1 });
@@ -895,7 +931,7 @@ function createTableListElement(propDump: any, compUuid: string, compIndex: numb
                 const tblDelBtn = createDelButton('×');
                 tblDelBtn.addEventListener('click', async () => {
                     if (!compUuid) return; items.splice(i, 1);
-                    if (compUuid === 'json-edit') { if (jsonState.asset) { jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty(); } propDump.value.length = 0; propDump.value.push(...items); updateHeader(); renderItems(); return; }
+                    if (compUuid === 'json-edit') { if (jsonState.asset) { jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty(); } propDump.value.length = 0; propDump.value.push(...items); await triggerJsonEditCallback(taowuMeta, propName); updateHeader(); renderItems(); return; }
                     await safeSetProperty(compUuid, `${basePath}.length`, { value: items.length });
                     propDump.value = [...items]; updateHeader(); renderItems();
                     if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
@@ -1063,8 +1099,8 @@ function createTableListElement(propDump: any, compUuid: string, compIndex: numb
             }
         }
         if (compUuid === 'json-edit') { if (jsonState.asset) { jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty(); } propDump.value.length = 0; propDump.value.push(...items); }
+        await triggerJsonEditCallback(taowuMeta, propName);
         updateHeader(); renderItems();
-        if (taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
     });
     content.appendChild(addBtn);
     return container;
@@ -1260,9 +1296,7 @@ function setupChangeListener(input: HTMLElement, propName: string, propDump: any
                 if (jsonState.asset) {
                     syncJsonEditValue(jsonState.asset, propDump, newVal);
                     jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty();
-                    // 触发重新渲染以更新 ShowIf/HideIf 等条件
-                    const contentEl = input.closest('.json-asset-content') as any;
-                    if (contentEl?.__taowuRerender) contentEl.__taowuRerender(propName, newVal);
+                    // 不在此处重新渲染，等 confirm (失去焦点) 时再渲染
                 }
                 return;
             }
@@ -1274,6 +1308,42 @@ function setupChangeListener(input: HTMLElement, propName: string, propDump: any
             }
         };
         input.addEventListener('change-dump', handleChange);
+        // json-edit: 失去焦点时才触发重新渲染和回调
+        if (compUuid === 'json-edit') {
+            const doRerender = () => {
+                if (!jsonState.asset) return;
+                if (taowuMeta?.onValueChanged) {
+                    Editor.Message.request('taowu-inspector', 'trigger-value-changed-by-class',
+                        jsonState.rootTypeName, taowuMeta.onValueChanged, JSON.parse(JSON.stringify(jsonState.asset)))
+                        .then((cbResult: any) => {
+                            if (cbResult) {
+                                Object.keys(cbResult).forEach(k => { jsonState.asset[k] = cbResult[k]; });
+                                jsonState.lastVisibleKeys = '__force__';
+                                if (jsonState.contentEl?.__taowuRerender) jsonState.contentEl.__taowuRerender();
+                            }
+                        });
+                } else {
+                    const contentEl = jsonState.contentEl;
+                    if (contentEl?.__taowuRerender) contentEl.__taowuRerender();
+                }
+            };
+            // 防抖: confirm 和 blur 可能同时触发，只执行一次
+            let rerenderTimer: any = null;
+            const debouncedRerender = () => {
+                if (rerenderTimer) clearTimeout(rerenderTimer);
+                rerenderTimer = setTimeout(() => { rerenderTimer = null; doRerender(); }, 50);
+            };
+            // 监听 ui-prop 的 confirm 事件
+            input.addEventListener('confirm', () => { debouncedRerender(); });
+            // 延迟查找内部子元素监听 confirm (shadow DOM 需要等渲染完成)
+            requestAnimationFrame(() => {
+                const innerInputs = input.querySelectorAll('ui-input, ui-num-input, ui-slider, ui-color-picker');
+                innerInputs.forEach((el: any) => {
+                    el.addEventListener('confirm', () => { debouncedRerender(); });
+                    el.addEventListener('blur', () => { debouncedRerender(); });
+                });
+            });
+        }
         return;
     }
     const isSlider = input.tagName.toLowerCase() === 'ui-slider';
@@ -1282,25 +1352,53 @@ function setupChangeListener(input: HTMLElement, propName: string, propDump: any
         if (!compUuid) return;
         const newValue = getInputValue(input, propDump);
         if (JSON.stringify(newValue) === JSON.stringify(lastWrittenValue)) return;
-        if (compUuid === 'json-edit') {
-            propDump.value = newValue; lastWrittenValue = newValue;
-            if (jsonState.asset) {
-                syncJsonEditValue(jsonState.asset, propDump, newValue);
-                jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty();
-                // 触发重新渲染以更新 ShowIf/HideIf 等条件
-                const contentEl = input.closest('.json-asset-content') as any;
-                if (contentEl?.__taowuRerender) contentEl.__taowuRerender(propName, newValue);
-            }
-            return;
-        }
         const result = await safeSetProperty(compUuid, propPath, { type: propDump.type, value: newValue });
         if (!result) { try { setInputValue(input, propDump.value, propDump); } catch (e) {} }
         else { propDump.value = newValue; lastWrittenValue = newValue; }
         if (taowuMeta?.onValueChanged || taowuMeta?.onCollectionChanged) await triggerCallbacks(compUuid, compIndex, propName);
     };
     const isInputLike = input.tagName.toLowerCase() === 'ui-input' || isSlider;
-    if (isInputLike) input.addEventListener('confirm', (e: Event) => { e.stopPropagation(); doSetProperty(); });
-    else input.addEventListener('change', () => { doSetProperty(); });
+    if (compUuid === 'json-edit') {
+        // json-edit: change 时仅同步值，confirm 时才重新渲染和回调
+        const doSyncJsonEdit = () => {
+            if (!jsonState.asset) return;
+            const newValue = getInputValue(input, propDump);
+            if (JSON.stringify(newValue) === JSON.stringify(lastWrittenValue)) return;
+            propDump.value = newValue; lastWrittenValue = newValue;
+            syncJsonEditValue(jsonState.asset, propDump, newValue);
+            jsonState.dirty = true; if (jsonState.onDirty) jsonState.onDirty();
+        };
+        const doRerenderJsonEdit = () => {
+            if (!jsonState.asset) return;
+            if (taowuMeta?.onValueChanged) {
+                Editor.Message.request('taowu-inspector', 'trigger-value-changed-by-class',
+                    jsonState.rootTypeName, taowuMeta.onValueChanged, JSON.parse(JSON.stringify(jsonState.asset)))
+                    .then((cbResult: any) => {
+                        if (cbResult) {
+                            Object.keys(cbResult).forEach(k => { jsonState.asset[k] = cbResult[k]; });
+                            jsonState.lastVisibleKeys = '__force__';
+                            const contentEl = jsonState.contentEl;
+                            if (contentEl?.__taowuRerender) contentEl.__taowuRerender();
+                        }
+                    });
+            } else {
+                const contentEl = jsonState.contentEl;
+                if (contentEl?.__taowuRerender) contentEl.__taowuRerender();
+            }
+        };
+        if (isInputLike) {
+            // ui-input/ui-slider: change 时同步值，confirm 时重新渲染
+            input.addEventListener('change', () => { doSyncJsonEdit(); });
+            input.addEventListener('confirm', (e: Event) => { e.stopPropagation(); doRerenderJsonEdit(); });
+        } else {
+            // 其他元素 (checkbox/select 等): change 时同步+渲染
+            input.addEventListener('change', () => { doSyncJsonEdit(); doRerenderJsonEdit(); });
+        }
+    } else if (isInputLike) {
+        input.addEventListener('confirm', (e: Event) => { e.stopPropagation(); doSetProperty(); });
+    } else {
+        input.addEventListener('change', () => { doSetProperty(); });
+    }
 }
 
 /** 判断能否根据元数据推断数组元素的默认值 */

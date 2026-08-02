@@ -433,16 +433,6 @@ function doRender(self: TaoWuPanelThis): void {
     const taowuMeta: ITaoWuClassMeta = self.taowuMetadata || {};
     const propKeys = collectAllKeys(properties, taowuMeta);
 
-    // Debug info
-    const debugLines: string[] = [];
-    debugLines.push('componentType: "' + self.componentType + '"');
-    debugLines.push('nodeUuid: ' + self.nodeUuid);
-    const ctlDump = properties.get('configTableList');
-    if (ctlDump) debugLines.push('configTableList: ' + JSON.stringify(ctlDump).substring(0, 500));
-    const cmDump = properties.get('configMap');
-    if (cmDump) debugLines.push('configMap: ' + JSON.stringify(cmDump).substring(0, 500));
-    showDebug(self, debugLines.join('\n'));
-
     // 使用 compUuid 作为 set-property 的 uuid
     const propUuid = self.compUuid || self.nodeUuid;
     const isRendering = () => self.rendering;
@@ -771,6 +761,8 @@ function updatePropDumps(self: TaoWuPanelThis): void {
             if (meta?.labelText) dumpCopy.displayName = meta.labelText;
             if (meta?.readOnly) dumpCopy.readonly = true;
             if (meta?.range) { dumpCopy.slide = true; dumpCopy.min = meta.range.min; dumpCopy.max = meta.range.max; }
+            if (meta?.rangeMin !== undefined) { dumpCopy.min = meta.rangeMin; }
+            if (meta?.rangeMax !== undefined) { dumpCopy.max = meta.rangeMax; }
             if (meta?.textarea) dumpCopy.multiline = true;
             try { (uiProp as any).dump = dumpCopy; } catch (e) {}
 
